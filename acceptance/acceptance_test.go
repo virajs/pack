@@ -112,12 +112,9 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 
 		when("'--publish' flag is not specified'", func() {
 			it("builds and exports an image", func() {
-				runPackBuild := func() string {
-					cmd := exec.Command(pack, "build", repoName, "-p", sourceCodePath, "--detect-image", "packsdev/v3:detect")
-					cmd.Env = append(os.Environ(), "HOME="+homeDir)
-					return run(t, cmd)
-				}
-				runPackBuild()
+				cmd := exec.Command(pack, "build", repoName, "-p", sourceCodePath, "--detect-image", "packsdev/v3:detect")
+				cmd.Env = append(os.Environ(), "HOME="+homeDir)
+				run(t, cmd)
 
 				run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", repoName))
 				launchPort := fetchHostPort(t, containerName)
@@ -136,6 +133,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		when("'--publish' flag is specified", func() {
 			it("builds and exports an image", func() {
 				runPackBuild := func() string {
+					t.Helper()
 					cmd := exec.Command(pack, "build", repoName, "-p", sourceCodePath, "--detect-image", "packsdev/v3:detect", "--publish")
 					cmd.Env = append(os.Environ(), "HOME="+homeDir)
 					return run(t, cmd)
