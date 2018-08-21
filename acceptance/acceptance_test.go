@@ -90,7 +90,13 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", registryContainerName, "registry:2"))
 			registryPort = fetchHostPort(t, registryContainerName)
 
-			sourceCodePath = filepath.Join("fixtures", "node_app")
+			var err error
+			sourceCodePath, err = ioutil.TempDir("", "pack.build.node_app.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			exec.Command("cp", "-r", "fixtures/node_app/.", sourceCodePath).Run()
+
 			repo = "some-org/" + randString(10)
 			repoName = "localhost:" + registryPort + "/" + repo
 			containerName = "test-" + randString(10)
@@ -99,6 +105,9 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			exec.Command("docker", "kill", containerName).Run()
 			exec.Command("docker", "rmi", repoName).Run()
 			exec.Command("docker", "kill", registryContainerName).Run()
+			if sourceCodePath != "" {
+				os.RemoveAll(sourceCodePath)
+			}
 		})
 
 		when("'--publish' flag is not specified'", func() {
