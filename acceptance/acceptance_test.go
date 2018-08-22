@@ -82,7 +82,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		})
 	})
 
-	when("build on daemon", func() {
+	when("pack build", func() {
 		var sourceCodePath, repo, repoName, containerName, registryContainerName, registryPort string
 
 		it.Before(func() {
@@ -160,6 +160,57 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				regex := regexp.MustCompile(`moved \d+ packages`)
 				if !regex.MatchString(output) {
 					t.Fatalf("Build failed to use cache: %s", output)
+				}
+			})
+		}, spec.Parallel(), spec.Report(report.Terminal{}))
+	})
+
+	when.Focus("pack cf-build", func() {
+		var sourceCodePath, repo, repoName, containerName, registryContainerName, registryPort string
+
+		it.Before(func() {
+			registryContainerName = "test-registry-" + randString(10)
+			run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", registryContainerName, "registry:2"))
+			registryPort = fetchHostPort(t, registryContainerName)
+
+			var err error
+			sourceCodePath, err = ioutil.TempDir("", "pack.build.node_app.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			exec.Command("cp", "-r", "fixtures/node_app/.", sourceCodePath).Run()
+
+			repo = "some-org/" + randString(10)
+			repoName = "localhost:" + registryPort + "/" + repo
+			containerName = "test-" + randString(10)
+		})
+		it.After(func() {
+			exec.Command("docker", "kill", containerName).Run()
+			exec.Command("docker", "rmi", repoName).Run()
+			exec.Command("docker", "kill", registryContainerName).Run()
+			if sourceCodePath != "" {
+				os.RemoveAll(sourceCodePath)
+			}
+		})
+
+		when("'--publish' flag is not specified'", func() {
+			it("builds and exports an image", func() {
+				cmd := exec.Command(pack, "cf-build", repoName, "-p", sourceCodePath)
+				cmd.Env = append(os.Environ(), "HOME="+homeDir)
+				run(t, cmd)
+
+				// TODO confirm cf (v2b) staging was done
+
+				run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", repoName))
+				launchPort := fetchHostPort(t, containerName)
+
+				time.Sleep(2 * time.Second)
+				assertEq(t, fetch(t, "http://localhost:"+launchPort), "Buildpacks Worked!")
+
+				t.Log("Checking that registry is empty")
+				contents := fetch(t, fmt.Sprintf("http://localhost:%s/v2/_catalog", registryPort))
+				if strings.Contains(string(contents), repo) {
+					t.Fatalf("Should not have published image without the '--publish' flag: got %s", contents)
 				}
 			})
 		}, spec.Parallel(), spec.Report(report.Terminal{}))
