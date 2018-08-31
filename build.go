@@ -41,8 +41,8 @@ func (b *BuildFlags) Run() error {
 	launchVolume := fmt.Sprintf("pack-launch-%x", uid)
 	workspaceVolume := fmt.Sprintf("pack-workspace-%x", uid)
 	cacheVolume := fmt.Sprintf("pack-cache-%x", md5.Sum([]byte(b.AppDir)))
-	defer exec.Command("docker", "volume", "rm", "-f", launchVolume).Run()
-	defer exec.Command("docker", "volume", "rm", "-f", workspaceVolume).Run()
+	// defer exec.Command("docker", "volume", "rm", "-f", launchVolume).Run()
+	// defer exec.Command("docker", "volume", "rm", "-f", workspaceVolume).Run()
 
 	// fmt.Println("*** COPY APP TO VOLUME:")
 	if err := copyToVolume(b.DetectImage, launchVolume, b.AppDir, "app"); err != nil {
@@ -50,6 +50,7 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** DETECTING:")
+	fmt.Println("docker", "run", "--rm", "-v", launchVolume+":/launch", "-v", workspaceVolume+":/workspace", b.DetectImage)
 	cmd := exec.Command("docker", "run", "--rm", "-v", launchVolume+":/launch", "-v", workspaceVolume+":/workspace", b.DetectImage)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

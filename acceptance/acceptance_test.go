@@ -268,6 +268,61 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			})
 		})
 	}, spec.Parallel(), spec.Report(report.Terminal{}))
+
+	when("create, build, run", func() {
+		var tmpDir, detectImageName, buildImageName, repoName, containerName, registryContainerName, registry string
+
+		it.Before(func() {
+			uid := randString(10)
+			registryContainerName = "test-registry-" + uid
+			run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", registryContainerName, "registry:2"))
+			registry = "localhost:" + fetchHostPort(t, registryContainerName) + "/"
+
+			var err error
+			tmpDir, err = ioutil.TempDir("", "pack.build.node_app.")
+			assertNil(t, err)
+			assertNil(t, os.Mkdir(filepath.Join(tmpDir, "app"), 0755))
+			run(t, exec.Command("cp", "-r", "fixtures/node_app/.", filepath.Join(tmpDir, "app")))
+			assertNil(t, os.Mkdir(filepath.Join(tmpDir, "buildpacks"), 0755))
+			run(t, exec.Command("cp", "-r", "fixtures/buildpacks/.", filepath.Join(tmpDir, "buildpacks")))
+
+			repoName = "some-org/output-" + uid
+			detectImageName = "some-org/detect-" + uid
+			buildImageName = "some-org/build-" + uid
+			containerName = "test-" + uid
+
+			txt, err := ioutil.ReadFile(filepath.Join(tmpDir, "buildpacks", "order.toml"))
+			assertNil(t, err)
+			txt2 := strings.Replace(string(txt), "some-build-image", registry+buildImageName, -1)
+			txt2 = strings.Replace(txt2, "some-run-image", registry+buildImageName, -1)
+			assertNil(t, ioutil.WriteFile(filepath.Join(tmpDir, "buildpacks", "order.toml"), []byte(txt2), 0644))
+		})
+		it.After(func() {
+			// docker.Kill(containerName, registryContainerName)
+			// docker.RemoveImage(repoName, detectImageName, buildImageName)
+			// if tmpDir != "" {
+			// 	os.RemoveAll(tmpDir)
+			// }
+		})
+
+		it.Focus("run works", func() {
+			t.Log("create detect image:")
+			cmd := exec.Command(pack, "create", registry+detectImageName, registry+buildImageName, "--from-base-image", "packsdev/v3:latest", "-p", filepath.Join(tmpDir, "buildpacks"), "--publish")
+			cmd.Env = append(os.Environ(), "HOME="+homeDir)
+			run(t, cmd)
+
+			t.Log("build image from detect:")
+			docker.Pull(t, registry+detectImageName, "latest")
+			docker.Pull(t, registry+buildImageName, "latest")
+			cmd = exec.Command(pack, "build", registry+repoName, "-p", filepath.Join(tmpDir, "app"), "--detect-image", registry+detectImageName, "--publish")
+			cmd.Env = append(os.Environ(), "HOME="+homeDir)
+			run(t, cmd)
+
+			t.Log("run image:", repoName)
+			docker.Pull(t, registry+repoName, "latest")
+			run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", registry+repoName))
+		})
+	}, spec.Parallel(), spec.Report(report.Terminal{}))
 }
 
 func run(t *testing.T, cmd *exec.Cmd) string {
