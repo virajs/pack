@@ -15,6 +15,8 @@ import (
 	eng "github.com/buildpack/forge/engine"
 	engdocker "github.com/buildpack/forge/engine/docker"
 	"github.com/buildpack/lifecycle"
+	"github.com/buildpack/packs"
+	"github.com/buildpack/packs/img"
 	"github.com/google/uuid"
 )
 
@@ -28,14 +30,16 @@ func Build(appDir, detectImage, repoName string, publish bool) error {
 }
 
 type BuildFlags struct {
-	AppDir          string
-	DetectImage     string
-	RepoName        string
-	Publish         bool
+	AppDir      string
+	DetectImage string
+	RepoName    string
+	Publish     bool
+	// Set by init
+	LaunchVolume    string
+	WorkspaceVolume string
+	CacheVolume     string
 	Engine          eng.Engine
-	launchVolume    string
-	workspaceVolume string
-	cacheVolume     string
+	TmpDir          string
 }
 
 func (b *BuildFlags) Init() error {
@@ -46,20 +50,32 @@ func (b *BuildFlags) Init() error {
 	}
 
 	uid := uuid.New().String()
-	b.launchVolume = fmt.Sprintf("pack-launch-%x", uid)
-	b.workspaceVolume = fmt.Sprintf("pack-workspace-%x", uid)
-	b.cacheVolume = fmt.Sprintf("pack-cache-%x", md5.Sum([]byte(b.AppDir)))
+	b.LaunchVolume = fmt.Sprintf("pack-launch-%x", uid)
+	b.WorkspaceVolume = fmt.Sprintf("pack-workspace-%x", uid)
+	b.CacheVolume = fmt.Sprintf("pack-cache-%x", md5.Sum([]byte(b.AppDir)))
 
 	b.Engine, err = engdocker.New(&eng.EngineConfig{})
+	if err != nil {
+		return err
+	}
+
+	b.TmpDir, err = ioutil.TempDir("", "pack.build.")
 	return err
+}
+
+func (b *BuildFlags) Close() {
+	exec.Command("docker", "volume", "rm", "-f", b.LaunchVolume).Run()
+	exec.Command("docker", "volume", "rm", "-f", b.WorkspaceVolume).Run()
+	if b.TmpDir != "" {
+		os.RemoveAll(b.TmpDir)
+	}
 }
 
 func (b *BuildFlags) Run() error {
 	if err := b.Init(); err != nil {
 		return err
 	}
-	defer exec.Command("docker", "volume", "rm", "-f", b.launchVolume).Run()
-	defer exec.Command("docker", "volume", "rm", "-f", b.workspaceVolume).Run()
+	defer b.Close()
 
 	waitFor(b.Engine.NewImage().Pull(b.DetectImage))
 	fmt.Println("*** COPY APP TO VOLUME:")
@@ -107,12 +123,11 @@ func (b *BuildFlags) UploadDirToVolume(srcDir, destDir string) error {
 		Name:  "pack-upload",
 		Image: b.DetectImage,
 		Binds: []string{
-			b.launchVolume + ":/launch",
-			b.workspaceVolume + ":/workspace",
+			b.LaunchVolume + ":/launch",
 		},
 		// TODO below is very problematic
 		Entrypoint: []string{},
-		Cmd:        []string{"chown", "-R", "packs", destDir},
+		Cmd:        []string{"chown", "-R", "packs", "/launch"},
 		User:       "root",
 	})
 	if err != nil {
@@ -134,41 +149,34 @@ func (b *BuildFlags) UploadDirToVolume(srcDir, destDir string) error {
 	return nil
 }
 
-func (b *BuildFlags) ExportVolume(path string) (string, func(), error) {
+func (b *BuildFlags) ExportVolume(path string) (string, error) {
+	tmpDir, err := b.tmpDir("ExportVolume")
+	if err != nil {
+		return "", err
+	}
+
 	cont, err := b.Engine.NewContainer(&eng.ContainerConfig{
 		Name:  "pack-export",
 		Image: b.DetectImage,
 		Binds: []string{
-			b.launchVolume + ":/launch",
+			b.LaunchVolume + ":/launch",
 		},
 	})
 	if err != nil {
-		return "", func() {}, err
+		return "", err
 	}
 	defer cont.Close()
 
-	tmpDir, err := ioutil.TempDir("", "pack.build.")
-	if err != nil {
-		return "", func() {}, err
-	}
-	cleanup := func() { os.RemoveAll(tmpDir) }
-
-	fmt.Println("*   StreamTarFrom:", path)
 	r, err := cont.StreamTarFrom(path)
 	if err != nil {
-		cleanup()
-		return "", func() {}, err
+		return "", err
 	}
 
-	fmt.Println("*   UntarReader:", tmpDir)
 	if err := untarReader(r, tmpDir); err != nil {
-		fmt.Println("FAILED TO UNTAR READER")
-		cleanup()
-		return "", func() {}, err
+		return "", err
 	}
 
-	fmt.Println("*   ExportVolume done")
-	return tmpDir, cleanup, nil
+	return tmpDir, nil
 }
 
 func (b *BuildFlags) Detect() (lifecycle.BuildpackGroup, error) {
@@ -176,8 +184,8 @@ func (b *BuildFlags) Detect() (lifecycle.BuildpackGroup, error) {
 		Name:  "pack-detect",
 		Image: b.DetectImage,
 		Binds: []string{
-			b.launchVolume + ":/launch",
-			b.workspaceVolume + ":/workspace",
+			b.LaunchVolume + ":/launch",
+			b.WorkspaceVolume + ":/workspace",
 		},
 	})
 	if err != nil {
@@ -195,15 +203,31 @@ func (b *BuildFlags) Detect() (lifecycle.BuildpackGroup, error) {
 }
 
 func (b *BuildFlags) Analyze(group lifecycle.BuildpackGroup) error {
-	analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
+	tmpDir, err := b.tmpDir("Analyze")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(analyzeTmpDir)
-	if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
+
+	origImage, err := readImage(b.RepoName, !b.Publish)
+	if err != nil {
 		return err
 	}
-	return b.UploadDirToVolume(analyzeTmpDir, "/launch")
+
+	if origImage == nil {
+		// no previous image to analyze
+		return nil
+	}
+
+	analyzer := &lifecycle.Analyzer{
+		Buildpacks: group.Buildpacks,
+		Out:        os.Stdout,
+		Err:        os.Stderr,
+	}
+	if err := analyzer.Analyze(tmpDir, origImage); err != nil {
+		return packs.FailErrCode(err, packs.CodeFailedBuild)
+	}
+
+	return b.UploadDirToVolume(tmpDir, "/launch")
 }
 
 func (b *BuildFlags) Build(group lifecycle.BuildpackGroup) error {
@@ -211,9 +235,9 @@ func (b *BuildFlags) Build(group lifecycle.BuildpackGroup) error {
 		Name:  "pack-build",
 		Image: group.BuildImage,
 		Binds: []string{
-			b.launchVolume + ":/launch",
-			b.workspaceVolume + ":/workspace",
-			b.cacheVolume + ":/cache",
+			b.LaunchVolume + ":/launch",
+			b.WorkspaceVolume + ":/workspace",
+			b.CacheVolume + ":/cache",
 		},
 	})
 	if err != nil {
@@ -248,17 +272,69 @@ func (b *BuildFlags) GroupToml(container eng.Container) (lifecycle.BuildpackGrou
 }
 
 func (b *BuildFlags) Export(group lifecycle.BuildpackGroup) (string, error) {
-	localLaunchDir, cleanup, err := b.ExportVolume("/launch")
+	tmpDir, err := b.tmpDir("Export")
 	if err != nil {
 		return "", err
 	}
-	defer cleanup()
 
-	imgSHA, err := export(group, localLaunchDir, b.RepoName, group.RunImage, !b.Publish, !b.Publish)
+	localLaunchDir, err := b.ExportVolume("/launch")
 	if err != nil {
 		return "", err
 	}
-	return imgSHA, nil
+
+	origImage, err := readImage(b.RepoName, !b.Publish)
+	if err != nil {
+		return "", err
+	}
+
+	stackImage, err := readImage(group.RunImage, !b.Publish)
+	if err != nil || stackImage == nil {
+		return "", packs.FailErr(err, "get image for", group.RunImage)
+	}
+
+	var repoStore img.Store
+	if b.Publish {
+		repoStore, err = img.NewRegistry(b.RepoName)
+	} else {
+		repoStore, err = img.NewDaemon(b.RepoName)
+	}
+	if err != nil {
+		return "", packs.FailErr(err, "access", b.RepoName)
+	}
+
+	exporter := &lifecycle.Exporter{
+		Buildpacks: group.Buildpacks,
+		TmpDir:     tmpDir,
+		Out:        os.Stdout,
+		Err:        os.Stderr,
+	}
+	newImage, err := exporter.Export(
+		localLaunchDir,
+		stackImage,
+		origImage,
+	)
+	if err != nil {
+		return "", packs.FailErrCode(err, packs.CodeFailedBuild)
+	}
+
+	if err := repoStore.Write(newImage); err != nil {
+		return "", packs.FailErrCode(err, packs.CodeFailedUpdate, "write")
+	}
+
+	sha, err := newImage.Digest()
+	if err != nil {
+		return "", packs.FailErr(err, "calculating image digest")
+	}
+
+	return sha.String(), nil
+}
+
+func (b *BuildFlags) tmpDir(name string) (string, error) {
+	if b.TmpDir == "" {
+		return "", fmt.Errorf("%s expected a temp dir", name)
+	}
+	tmpDir := filepath.Join(b.TmpDir, name)
+	return tmpDir, os.Mkdir(tmpDir, 0777)
 }
 
 // TODO share between here and create.go (and exporter).
