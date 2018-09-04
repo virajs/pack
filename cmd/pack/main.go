@@ -10,12 +10,15 @@ import (
 func main() {
 	wd, _ := os.Getwd()
 
-	var buildFlags pack.BuildFlags
+	var buildFlags pack.Builder
 	buildCommand := &cobra.Command{
 		Use:  "build [IMAGE NAME]",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			buildFlags.RepoName = args[0]
+			if err := buildFlags.Init(); err != nil {
+				return err
+			}
 			return buildFlags.Run()
 		},
 	}
