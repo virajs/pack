@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -80,7 +81,7 @@ func export(group lifecycle.BuildpackGroup, launchDir, repoName, stackName strin
 	return sha.String(), nil
 }
 
-func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName, containerName string) (string, error) {
+func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
 	// metadata := packs.BuildMetadata{
 	// 	App:        packs.AppMetadata{},
 	// 	Buildpacks: []packs.BuildpackMetadata{},
@@ -97,6 +98,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 		},
 	}
 
+	fmt.Println("STACK:", stackName)
 	res, err := httpc.Get("http://unix/images/" + stackName + "/get")
 	if err != nil {
 		return "", err
@@ -120,6 +122,22 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 				panic(err)
 			}
 
+			if header.Name == "repositories" {
+				fmt.Println("REPOSITORIES")
+				out := make(map[string]map[string]string)
+				json.NewDecoder(tarReader).Decode(&out)
+				// io.Copy(os.Stdout, tarReader)
+				// fmt.Printf("OUT: %#v\n", out)
+				for _, v1 := range out {
+					for _, v2 := range v1 {
+						parentLayerID = v2
+					}
+				}
+				if parentLayerID == "" {
+					panic("could not determine top of stack")
+				}
+			}
+
 			if !(strings.HasSuffix(header.Name, "/VERSION") || strings.HasSuffix(header.Name, "/json") || strings.HasSuffix(header.Name, "/layer.tar")) {
 				continue
 			}
@@ -133,11 +151,9 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			if _, err = io.Copy(tarball, tarReader); err != nil {
 				panic(err)
 			}
-
-			parentLayerID = strings.Split(header.Name, "/")[0]
 		}
 
-		layerDirs := []string{"/launch/app", "/launch/config"}
+		layerDirs := []string{"app", "config"}
 		for _, buildpack := range group.Buildpacks {
 			dirs, err := filepath.Glob(filepath.Join(launchDir, buildpack.ID, "*.toml"))
 			if err != nil {
@@ -156,34 +172,19 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 				if err != nil {
 					panic(err)
 				}
-				layerDirs = append(layerDirs, "/launch/"+dir)
+				layerDirs = append(layerDirs, dir)
 			}
 		}
 
 		fmt.Println("LAYER DIRS:", layerDirs)
 
 		for _, name := range layerDirs {
-			// b, err := tarDir(filepath.Join(launchDir, name), "launch/"+name)
-			// if err != nil {
-			// 	panic(err)
-			// }
-
 			start := time.Now()
-			fmt.Println("Get Tar for:", name)
-			res, err := httpc.Get("http://unix/containers/" + containerName + "/archive?path=" + name)
+
+			b, err := tarDir(filepath.Join(launchDir, name), "launch/"+name)
 			if err != nil {
 				panic(err)
 			}
-			defer res.Body.Close()
-			if res.StatusCode != 200 {
-				panic(fmt.Errorf("expected 200: actual: %d", res.StatusCode))
-			}
-			b, err := ioutil.ReadAll(res.Body)
-			if err != nil {
-				panic(err)
-			}
-			res.Body.Close()
-			fmt.Printf("Got Tar for (%s): %s\n", time.Since(start), name)
 
 			layerID := fmt.Sprintf("%x", sha256.Sum256(b))
 			// fmt.Println("ADD LAYER:", layerID, len(b))

@@ -141,14 +141,7 @@ func (b *BuildFlags) Run() error {
 		}
 		imgSHA = "TODO"
 	} else if b.SimpleExport {
-		containerName := uuid.New().String()
-		if output, err := exec.Command("docker", "container", "create", "--name", containerName, "-v", launchVolume+":/launch:ro", "-v", workspaceVolume+":/workspace:ro", group.BuildImage).CombinedOutput(); err != nil {
-			fmt.Println(string(output))
-			return err
-		}
-		defer exec.Command("docker", "rm", containerName).Run()
-
-		imgSHA, err = simpleExport(group, localLaunchDir, b.RepoName, group.RunImage, containerName)
+		imgSHA, err = simpleExport(group, localLaunchDir, b.RepoName, group.RunImage)
 		if err != nil {
 			return err
 		}
