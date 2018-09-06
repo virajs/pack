@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/packs"
@@ -79,7 +80,7 @@ func export(group lifecycle.BuildpackGroup, launchDir, repoName, stackName strin
 	return sha.String(), nil
 }
 
-func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
+func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName, containerName string) (string, error) {
 	// metadata := packs.BuildMetadata{
 	// 	App:        packs.AppMetadata{},
 	// 	Buildpacks: []packs.BuildpackMetadata{},
@@ -124,6 +125,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			}
 
 			// fmt.Println(header.Name, header.FileInfo())
+			fmt.Println("From stack:", header.Name)
 
 			if err := tarball.WriteHeader(header); err != nil {
 				panic(err)
@@ -154,22 +156,43 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 				if err != nil {
 					panic(err)
 				}
-				layerDirs = append(layerDirs, dir)
+				layerDirs = append(layerDirs, "/launch/"+dir)
 			}
 		}
 
 		fmt.Println("LAYER DIRS:", layerDirs)
 
 		for _, name := range layerDirs {
-			b, err := tarDir(filepath.Join(launchDir, name), "launch/"+name)
+			// b, err := tarDir(filepath.Join(launchDir, name), "launch/"+name)
+			// if err != nil {
+			// 	panic(err)
+			// }
+
+			start := time.Now()
+			fmt.Println("Get Tar for:", name)
+			res, err := httpc.Get("http://unix/containers/" + containerName + "/archive?path=" + name)
 			if err != nil {
 				panic(err)
 			}
+			defer res.Body.Close()
+			if res.StatusCode != 200 {
+				panic(fmt.Errorf("expected 200: actual: %d", res.StatusCode))
+			}
+			b, err := ioutil.ReadAll(res.Body)
+			if err != nil {
+				panic(err)
+			}
+			res.Body.Close()
+			fmt.Printf("Got Tar for (%s): %s\n", time.Since(start), name)
+
 			layerID := fmt.Sprintf("%x", sha256.Sum256(b))
+			// fmt.Println("ADD LAYER:", layerID, len(b))
 			addFileToTar(tarball, layerID+"/VERSION", []byte("1.0"))
 			addFileToTar(tarball, layerID+"/json", []byte(fmt.Sprintf(`{"id":"%s","parent":"%s","os":"linux"}`, layerID, parentLayerID)))
 			addFileToTar(tarball, layerID+"/layer.tar", b)
 			parentLayerID = layerID
+
+			fmt.Printf("Full add tar for (%s): %s (%d)\n", time.Since(start), name, len(b))
 		}
 
 		// TODO repoName may have a tag, need to fix that
