@@ -7,12 +7,17 @@ import (
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/packs"
 	"github.com/buildpack/packs/img"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 func export(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string, useDaemon, useDaemonStack bool) (string, error) {
-	origImage, err := readImage(repoName, useDaemon)
-	if err != nil {
-		return "", err
+	var origImage v1.Image
+	if !useDaemon {
+		var err error
+		origImage, err = readImage(repoName, useDaemon)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	stackImage, err := readImage(stackName, useDaemonStack)

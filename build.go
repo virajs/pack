@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
@@ -62,17 +63,19 @@ func (b *BuildFlags) Run() error {
 		return err
 	}
 
-	fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
-	analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(analyzeTmpDir)
-	if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
-		return err
-	}
-	if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
-		return err
+	if b.Publish {
+		fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
+		analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(analyzeTmpDir)
+		if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
+			return err
+		}
+		if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println("*** BUILDING:")
@@ -98,16 +101,22 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** EXPORTING:")
+	start := time.Now()
 	localLaunchDir, cleanup, err := exportVolume(b.DetectImage, launchVolume)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
+	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
+	start = time.Now()
+
 	imgSHA, err := export(group, localLaunchDir, b.RepoName, group.RunImage, !b.Publish, !b.Publish)
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("    create image: %s\n", time.Since(start))
 
 	if b.Publish {
 		fmt.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
