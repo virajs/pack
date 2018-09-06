@@ -1,8 +1,11 @@
 package pack
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/packs"
@@ -66,4 +69,15 @@ func export(group lifecycle.BuildpackGroup, launchDir, repoName, stackName strin
 	}
 
 	return sha.String(), nil
+}
+
+func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
+	cmd := exec.Command("docker", "build", "--force-rm", "-t", repoName, "-f", "-", launchDir)
+	cmd.Dir = launchDir
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("FROM %s\nCOPY . /launch\n", stackName))
+	if txt, err := cmd.CombinedOutput(); err != nil {
+		fmt.Println(string(txt))
+		return "", err
+	}
+	return "TODO", nil
 }

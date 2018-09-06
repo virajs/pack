@@ -25,10 +25,11 @@ func Build(appDir, detectImage, repoName string, publish bool) error {
 }
 
 type BuildFlags struct {
-	AppDir      string
-	DetectImage string
-	RepoName    string
-	Publish     bool
+	AppDir       string
+	DetectImage  string
+	RepoName     string
+	Publish      bool
+	SimpleExport bool
 }
 
 func (b *BuildFlags) Run() error {
@@ -111,9 +112,17 @@ func (b *BuildFlags) Run() error {
 	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
 	start = time.Now()
 
-	imgSHA, err := export(group, localLaunchDir, b.RepoName, group.RunImage, !b.Publish, !b.Publish)
-	if err != nil {
-		return err
+	var imgSHA string
+	if b.SimpleExport && !b.Publish {
+		imgSHA, err = simpleExport(group, localLaunchDir, b.RepoName, group.RunImage)
+		if err != nil {
+			return err
+		}
+	} else {
+		imgSHA, err = export(group, localLaunchDir, b.RepoName, group.RunImage, !b.Publish, !b.Publish)
+		if err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("    create image: %s\n", time.Since(start))
