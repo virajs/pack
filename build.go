@@ -81,16 +81,20 @@ func (b *BuildFlags) Run() error {
 			return err
 		}
 	} else {
-		analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(analyzeTmpDir)
-		if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
-			return err
-		}
-		if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
-			return err
+		_, err := exec.Command("docker", "inspect", b.RepoName, "-f", `{{index .Config.Labels "sh.packs.build"}}`).Output()
+		if err == nil {
+			// TODO make analyze above allow passing metadata in ; then use that
+			analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(analyzeTmpDir)
+			if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
+				return err
+			}
+			if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
+				return err
+			}
 		}
 	}
 
