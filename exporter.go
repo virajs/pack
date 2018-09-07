@@ -341,44 +341,63 @@ func addFileToTar(w *tar.Writer, path string, contents []byte) error {
 	return err
 }
 
+// Copy from buildpack/lifecycle/exporter.go
 func tarDir(srcDir, destDir string) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		destPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return err
-		}
-		destPath = filepath.Join(destDir, destPath)
-		if info.IsDir() {
-			return nil
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			fmt.Println("SYMLINK:", destPath)
-			// TODO handle correctly
-			return nil
-		}
+	defer tw.Close()
 
-		if err := tw.WriteHeader(&tar.Header{
-			Name:    destPath,
-			Size:    info.Size(),
-			Mode:    int64(info.Mode()),
-			ModTime: info.ModTime(),
-		}); err != nil {
+	err := filepath.Walk(srcDir, func(file string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if fi.Mode().IsDir() {
+			return nil
+		}
+		relPath, err := filepath.Rel(srcDir, file)
+		if err != nil {
 			return err
 		}
 
-		fh, err := os.Open(path)
-		if err != nil {
+		var header *tar.Header
+		if fi.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(file)
+			if err != nil {
+				return err
+			}
+			header, err = tar.FileInfoHeader(fi, target)
+			if err != nil {
+				return err
+			}
+		} else {
+			header, err = tar.FileInfoHeader(fi, fi.Name())
+			if err != nil {
+				return err
+			}
+		}
+		header.Name = filepath.Join(destDir, relPath)
+		// TODO do something better ; should look up user
+		header.Uid = 1000
+		header.Gid = 1000
+		header.Uname = "packs"
+		header.Gname = "packs"
+
+		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
-		defer fh.Close()
-		_, err = io.Copy(tw, fh)
-		return err
+		if fi.Mode().IsRegular() {
+			f, err := os.Open(file)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if _, err := io.Copy(tw, f); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
+
 	tw.Close()
 	return buf.Bytes(), err
 }
