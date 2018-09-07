@@ -64,32 +64,30 @@ func (b *BuildFlags) Run() error {
 		return err
 	}
 
+	fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
 	if b.Publish {
-		fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
-		if false {
-			analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
-			if err != nil {
-				return err
-			}
-			defer os.RemoveAll(analyzeTmpDir)
-			if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
-				return err
-			}
-			if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
-				return err
-			}
-		} else {
-			cmd = exec.Command("docker", "run",
-				"--rm",
-				"-v", launchVolume+":/launch",
-				"-v", workspaceVolume+":/workspace",
-				"packs/v3:analyze",
-			)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				return err
-			}
+		cmd = exec.Command("docker", "run",
+			"--rm",
+			"-v", launchVolume+":/launch",
+			"-v", workspaceVolume+":/workspace",
+			"packs/v3:analyze",
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	} else {
+		analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(analyzeTmpDir)
+		if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
+			return err
+		}
+		if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
+			return err
 		}
 	}
 

@@ -88,6 +88,7 @@ func dockerBuildExport(group lifecycle.BuildpackGroup, launchDir, repoName, stac
 		return "", err
 	}
 	defer fh.Close()
+	fh.WriteString("FROM " + repoName + " AS prev\n\n")
 	fh.WriteString("FROM " + stackName + "\n")
 	fh.WriteString("ADD --chown=packs:packs app /launch/app\n")
 	fh.WriteString("ADD --chown=packs:packs config /launch/config\n")
