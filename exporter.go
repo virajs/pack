@@ -2,6 +2,7 @@ package pack
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -109,7 +110,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 	}
 
 	r, w := io.Pipe()
-	tarball := tar.NewWriter(w)
+	tarball := tar.NewWriter(bufio.NewWriterSize(w, 1048576))
 
 	go func() {
 		tarReader := tar.NewReader(res.Body)

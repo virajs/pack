@@ -116,6 +116,7 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** EXPORTING:")
+	fullStart := time.Now()
 	start := time.Now()
 	localLaunchDir, cleanup, err := exportVolume(b.DetectImage, launchVolume)
 	if err != nil {
@@ -152,7 +153,7 @@ func (b *BuildFlags) Run() error {
 		}
 	}
 
-	fmt.Printf("    create image: %s\n", time.Since(start))
+	fmt.Printf("    create image: %s (%s)\n", time.Since(start), time.Since(fullStart))
 
 	if b.Publish {
 		fmt.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
