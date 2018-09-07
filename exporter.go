@@ -2,7 +2,6 @@ package pack
 
 import (
 	"archive/tar"
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -18,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/packs"
 	"github.com/buildpack/packs/img"
@@ -83,13 +83,11 @@ func export(group lifecycle.BuildpackGroup, launchDir, repoName, stackName strin
 }
 
 func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
-	// metadata := packs.BuildMetadata{
-	// 	App:        packs.AppMetadata{},
-	// 	Buildpacks: []packs.BuildpackMetadata{},
-	// 	RunImage: packs.RunImageMetadata{
-	// 		SHA: stackDigest.String(),
-	// 	},
-	// }
+	metadata := packs.BuildMetadata{
+		App:        packs.AppMetadata{},
+		Buildpacks: []packs.BuildpackMetadata{},
+		RunImage:   packs.RunImageMetadata{},
+	}
 
 	httpc := http.Client{
 		Transport: &http.Transport{
@@ -110,11 +108,12 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 	}
 
 	r, w := io.Pipe()
-	tarball := tar.NewWriter(bufio.NewWriterSize(w, 1048576))
+	// tarball := tar.NewWriter(bufio.NewWriterSize(w, 1048576))
+	tarball := tar.NewWriter(w)
 
+	var parentLayerID string
 	go func() {
 		tarReader := tar.NewReader(res.Body)
-		var parentLayerID string
 		for {
 			header, err := tarReader.Next()
 			if err == io.EOF {
@@ -137,6 +136,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 				if parentLayerID == "" {
 					panic("could not determine top of stack")
 				}
+				metadata.RunImage.SHA = parentLayerID
 			}
 
 			if !(strings.HasSuffix(header.Name, "/VERSION") || strings.HasSuffix(header.Name, "/json") || strings.HasSuffix(header.Name, "/layer.tar")) {
@@ -179,6 +179,8 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 
 		fmt.Println("LAYER DIRS:", layerDirs)
 
+		bpMeta := make(map[string]packs.BuildpackMetadata)
+
 		for _, name := range layerDirs {
 			start := time.Now()
 
@@ -188,25 +190,94 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			}
 
 			layerID := fmt.Sprintf("%x", sha256.Sum256(b))
-			// fmt.Println("ADD LAYER:", layerID, len(b))
 			addFileToTar(tarball, layerID+"/VERSION", []byte("1.0"))
-			addFileToTar(tarball, layerID+"/json", []byte(fmt.Sprintf(`{"id":"%s","parent":"%s","os":"linux"}`, layerID, parentLayerID)))
+			layerData := map[string]interface{}{
+				"id":     layerID,
+				"parent": parentLayerID,
+				"os":     "linux",
+			}
+			layerDataJSON, err := json.Marshal(layerData)
+			if err != nil {
+				panic(nil)
+			}
+			addFileToTar(tarball, layerID+"/json", layerDataJSON)
 			addFileToTar(tarball, layerID+"/layer.tar", b)
 			parentLayerID = layerID
 
+			switch name {
+			case "app":
+				metadata.App.SHA = layerID
+			case "config":
+				metadata.Config.SHA = layerID
+			default:
+				m := strings.SplitN(name, "/", 2)
+				obj := bpMeta[m[0]]
+				obj.Key = m[0]
+				if obj.Layers == nil {
+					obj.Layers = make(map[string]packs.LayerMetadata)
+				}
+				var tomlData interface{}
+				_, err := toml.DecodeFile(filepath.Join(launchDir, name+".toml"), &tomlData)
+				if err != nil {
+					panic(nil)
+				}
+				obj.Layers[m[1]] = packs.LayerMetadata{SHA: layerID, Data: tomlData}
+				bpMeta[m[0]] = obj
+			}
+
 			fmt.Printf("Full add tar for (%s): %s (%d)\n", time.Since(start), name, len(b))
 		}
+
+		for _, bp := range bpMeta {
+			metadata.Buildpacks = append(metadata.Buildpacks, bp)
+		}
+
+		// Create layer for metadata label
+		metadataJSON, err := json.Marshal(metadata)
+		if err != nil {
+			panic(err)
+		}
+		layerID := fmt.Sprintf("%x", sha256.Sum256(metadataJSON))
+		addFileToTar(tarball, layerID+"/VERSION", []byte("1.0"))
+		layerData := map[string]interface{}{
+			"id":     layerID,
+			"parent": parentLayerID,
+			"os":     "linux",
+			"container_config": map[string]interface{}{
+				"Labels": map[string]interface{}{
+					"packs.sh": string(metadataJSON),
+				},
+			},
+		}
+		layerDataJSON, err := json.Marshal(layerData)
+		if err != nil {
+			panic(nil)
+		}
+		fmt.Println(layerID, " => ", string(layerDataJSON))
+		addFileToTar(tarball, layerID+"/json", layerDataJSON)
+		var emptyTar bytes.Buffer
+		tar.NewWriter(&emptyTar).Close()
+		addFileToTar(tarball, layerID+"/layer.tar", emptyTar.Bytes())
+		parentLayerID = layerID
 
 		// TODO repoName may have a tag, need to fix that
 		if err := addFileToTar(tarball, "repositories", []byte(fmt.Sprintf(`{"%s":{"latest":"%s"}}`, repoName, parentLayerID))); err != nil {
 			panic(err)
 		}
 
+		fmt.Println("FINAL PARENT ID:", parentLayerID)
+
 		tarball.Close()
 		w.Close()
+
+		fmt.Println("**** closed tarball ****")
 	}()
 
-	res, err = httpc.Post("http://unix/images/load", "application/tar", r)
+	debugTarFile, _ := os.Create("/tmp/debug_tar_file.tar")
+	r2 := io.TeeReader(r, debugTarFile)
+	defer debugTarFile.Close()
+
+	res, err = httpc.Post("http://unix/images/load", "application/tar", r2)
 	r.Close()
 	if err != nil {
 		return "", err
@@ -215,10 +286,12 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 	if res.StatusCode != 200 {
 		return "", fmt.Errorf("expected 200: actual: %d", res.StatusCode)
 	}
-	fmt.Printf("POST: %#v\n", res)
+	fmt.Printf("\n\nPOST: %#v\n\n", res)
 	io.Copy(os.Stdout, res.Body)
+	fmt.Println("")
+	fmt.Println("FINAL PARENT ID:", parentLayerID)
 
-	return "TODO", nil
+	return parentLayerID, nil
 }
 
 func simpleExportOld(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {

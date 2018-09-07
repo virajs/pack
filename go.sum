@@ -13,6 +13,7 @@ github.com/buildpack/packs v0.0.0-20180824001031-aa30a412923763df37e83f14a6e4e0f
 github.com/cpuguy83/go-md2man v1.0.8/go.mod h1:N6JayAiVKtlHSnuTCeuLSQVs75hb8q+dYQLjr7cDsKY=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/dgodd/go-containerregistry v0.0.0-20180731221751-611aad063148a69435dccd3cf8475262c11814f6 h1:dX5dnTm4W/mOJZ1cTz9vX932ZGMJjgtxk3CcxsQ+HOg=
 github.com/dgodd/go-containerregistry v0.0.0-20180731221751-611aad063148a69435dccd3cf8475262c11814f6/go.mod h1:PyUt+1ej85jmZb2zpaWxwnO7AEf7eTbBL2mAsIxPuXo=
 github.com/dgrijalva/jwt-go v3.2.0+incompatible/go.mod h1:E3ru+11k8xSBh+hMPgOLZmtrrCbhqsmaPHjLKYnJCaQ=
 github.com/docker/distribution v0.0.0-20180327202408-83389a148052 h1:bYklS+YB8BZreSEY+/WqaH+S8upfuYf0Hq/EmNOQMIA=
