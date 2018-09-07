@@ -25,11 +25,11 @@ func Build(appDir, detectImage, repoName string, publish bool) error {
 }
 
 type BuildFlags struct {
-	AppDir       string
-	DetectImage  string
-	RepoName     string
-	Publish      bool
-	SimpleExport bool
+	AppDir      string
+	DetectImage string
+	RepoName    string
+	Publish     bool
+	ExportType  string
 }
 
 func (b *BuildFlags) Run() error {
@@ -118,14 +118,18 @@ func (b *BuildFlags) Run() error {
 	fmt.Println("*** EXPORTING:")
 	fullStart := time.Now()
 	start := time.Now()
-	localLaunchDir, cleanup, err := exportVolume(b.DetectImage, launchVolume)
-	if err != nil {
-		return err
+	var localLaunchDir string
+	cleanup := func() {}
+	if !b.Publish {
+		localLaunchDir, cleanup, err = exportVolume(b.DetectImage, launchVolume)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
+		start = time.Now()
 	}
 	defer cleanup()
-
-	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
-	start = time.Now()
 
 	var imgSHA string
 	if b.Publish {
@@ -141,7 +145,12 @@ func (b *BuildFlags) Run() error {
 			return err
 		}
 		imgSHA = "TODO"
-	} else if b.SimpleExport {
+	} else if b.ExportType == "build" {
+		imgSHA, err = dockerBuildExport(group, localLaunchDir, b.RepoName, group.RunImage)
+		if err != nil {
+			return err
+		}
+	} else if b.ExportType == "simple" {
 		imgSHA, err = simpleExport(group, localLaunchDir, b.RepoName, group.RunImage)
 		if err != nil {
 			return err

@@ -22,7 +22,7 @@ func main() {
 	buildCommand.Flags().StringVarP(&buildFlags.AppDir, "path", "p", wd, "path to app dir")
 	buildCommand.Flags().StringVar(&buildFlags.DetectImage, "detect-image", "packs/v3:detect", "detect image")
 	buildCommand.Flags().BoolVar(&buildFlags.Publish, "publish", false, "publish to registry")
-	buildCommand.Flags().BoolVar(&buildFlags.SimpleExport, "simple-export", true, "simple-export for daemon only")
+	buildCommand.Flags().StringVar(&buildFlags.ExportType, "export-type", "build", "export method: [normal, simple, build(docker build)]")
 
 	var createFlags pack.Create
 	createCommand := &cobra.Command{
