@@ -66,16 +66,30 @@ func (b *BuildFlags) Run() error {
 
 	if b.Publish {
 		fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
-		analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(analyzeTmpDir)
-		if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
-			return err
-		}
-		if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
-			return err
+		if false {
+			analyzeTmpDir, err := ioutil.TempDir("", "pack.build.")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(analyzeTmpDir)
+			if err := analyzer(group, analyzeTmpDir, b.RepoName, !b.Publish); err != nil {
+				return err
+			}
+			if err := copyToVolume(b.DetectImage, launchVolume, analyzeTmpDir, ""); err != nil {
+				return err
+			}
+		} else {
+			cmd = exec.Command("docker", "run",
+				"--rm",
+				"-v", launchVolume+":/launch",
+				"-v", workspaceVolume+":/workspace",
+				"packs/v3:analyze",
+			)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -113,7 +127,20 @@ func (b *BuildFlags) Run() error {
 	start = time.Now()
 
 	var imgSHA string
-	if b.SimpleExport && !b.Publish {
+	if b.Publish {
+		cmd = exec.Command("docker", "run",
+			"--rm",
+			"-v", launchVolume+":/launch",
+			"-v", workspaceVolume+":/workspace", // TODO I think this can be deleted
+			"packs/v3:export",
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		imgSHA = "TODO"
+	} else if b.SimpleExport {
 		imgSHA, err = simpleExport(group, localLaunchDir, b.RepoName, group.RunImage)
 		if err != nil {
 			return err
