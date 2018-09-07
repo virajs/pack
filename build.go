@@ -29,7 +29,6 @@ type BuildFlags struct {
 	DetectImage string
 	RepoName    string
 	Publish     bool
-	ExportType  string
 }
 
 func (b *BuildFlags) Run() error {
@@ -70,7 +69,11 @@ func (b *BuildFlags) Run() error {
 			"--rm",
 			"-v", launchVolume+":/launch",
 			"-v", workspaceVolume+":/workspace",
+			// TODO below line assumes too many things
+			"-v", filepath.Join(os.Getenv("HOME"), ".docker")+":/home/packs/.docker:ro",
+			"-e", "PACK_USE_HELPERS=true",
 			"packs/v3:analyze",
+			b.RepoName,
 		)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -114,56 +117,44 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** EXPORTING:")
-	fullStart := time.Now()
-	start := time.Now()
-	var localLaunchDir string
-	cleanup := func() {}
-	if !b.Publish {
-		localLaunchDir, cleanup, err = exportVolume(b.DetectImage, launchVolume)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
-		start = time.Now()
-	}
-	defer cleanup()
-
-	var imgSHA string
 	if b.Publish {
 		cmd = exec.Command("docker", "run",
 			"--rm",
 			"-v", launchVolume+":/launch",
 			"-v", workspaceVolume+":/workspace", // TODO I think this can be deleted
+			// TODO below line assumes too many things
+			"-v", filepath.Join(os.Getenv("HOME"), ".docker")+":/home/packs/.docker:ro",
+			"-e", "PACK_USE_HELPERS=true",
+			"-e", "PACK_RUN_IMAGE="+group.RunImage,
 			"packs/v3:export",
+			b.RepoName,
 		)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			return err
 		}
-		imgSHA = "TODO"
-	} else if b.ExportType == "build" {
-		imgSHA, err = dockerBuildExport(group, localLaunchDir, b.RepoName, group.RunImage)
-		if err != nil {
-			return err
-		}
-	} else if b.ExportType == "simple" {
-		imgSHA, err = simpleExport(group, localLaunchDir, b.RepoName, group.RunImage)
-		if err != nil {
-			return err
-		}
 	} else {
-		imgSHA, err = export(group, localLaunchDir, b.RepoName, group.RunImage, !b.Publish, !b.Publish)
+		fullStart := time.Now()
+		start := time.Now()
+		var localLaunchDir string
+		cleanup := func() {}
+		if !b.Publish {
+			localLaunchDir, cleanup, err = exportVolume(b.DetectImage, launchVolume)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
+			start = time.Now()
+		}
+		defer cleanup()
+
+		_, err = dockerBuildExport(group, localLaunchDir, b.RepoName, group.RunImage)
 		if err != nil {
 			return err
 		}
-	}
-
-	fmt.Printf("    create image: %s (%s)\n", time.Since(start), time.Since(fullStart))
-
-	if b.Publish {
-		fmt.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
+		fmt.Printf("    create image: %s (%s)\n", time.Since(start), time.Since(fullStart))
 	}
 
 	return nil
