@@ -83,17 +83,13 @@ func export(group lifecycle.BuildpackGroup, launchDir, repoName, stackName strin
 }
 
 func dockerBuildExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
-	fh, err := os.Create(filepath.Join(launchDir, "Dockerfile"))
-	if err != nil {
-		return "", err
-	}
-	defer fh.Close()
-	fh.WriteString("FROM " + repoName + " AS prev\n\n")
-	fh.WriteString("FROM " + stackName + "\n")
-	fh.WriteString("ADD --chown=packs:packs app /launch/app\n")
-	fh.WriteString("ADD --chown=packs:packs config /launch/config\n")
+	var dockerFile string
+	dockerFile += "FROM " + stackName + "\n"
+	dockerFile += "ADD --chown=packs:packs app /launch/app\n"
+	dockerFile += "ADD --chown=packs:packs config /launch/config\n"
 	bpLayers := make(map[string][]string)
 	numLayers := 0
+	needPrevImage := false
 	for _, buildpack := range group.Buildpacks {
 		dirs, err := filepath.Glob(filepath.Join(launchDir, buildpack.ID, "*.toml"))
 		if err != nil {
@@ -118,14 +114,20 @@ func dockerBuildExport(group lifecycle.BuildpackGroup, launchDir, repoName, stac
 				return "", err
 			}
 			if exists {
-				fh.WriteString(fmt.Sprintf("ADD --chown=packs:packs %s /launch/%s\n", dir, dir))
+				dockerFile += fmt.Sprintf("ADD --chown=packs:packs %s /launch/%s\n", dir, dir)
 			} else {
-				fh.WriteString(fmt.Sprintf("COPY --from=prev --chown=packs:packs /launch/%s /launch/%s\n", dir, dir))
+				needPrevImage = true
+				dockerFile += fmt.Sprintf("COPY --from=prev --chown=packs:packs /launch/%s /launch/%s\n", dir, dir)
 			}
 			numLayers++
 		}
 	}
-	fh.Close()
+	if needPrevImage {
+		dockerFile = "FROM " + repoName + " AS prev\n\n" + dockerFile
+	}
+	if err := ioutil.WriteFile(filepath.Join(launchDir, "Dockerfile"), []byte(dockerFile), 0666); err != nil {
+		return "", err
+	}
 
 	cmd := exec.Command(
 		"docker", "build",
