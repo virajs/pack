@@ -97,7 +97,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 		},
 	}
 
-	fmt.Println("STACK:", stackName)
+	// fmt.Println("STACK:", stackName)
 	res, err := httpc.Get("http://unix/images/" + stackName + "/get")
 	if err != nil {
 		return "", err
@@ -113,6 +113,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 
 	var parentLayerID string
 	go func() {
+		// start := time.Now()
 		tarReader := tar.NewReader(res.Body)
 		runImageJson := make(map[string][]byte)
 		for {
@@ -124,7 +125,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			}
 
 			if header.Name == "repositories" {
-				fmt.Println("REPOSITORIES")
+				// fmt.Println("REPOSITORIES")
 				out := make(map[string]map[string]string)
 				json.NewDecoder(tarReader).Decode(&out)
 				// io.Copy(os.Stdout, tarReader)
@@ -145,7 +146,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			}
 
 			// fmt.Println(header.Name, header.FileInfo())
-			fmt.Println("From stack:", header.Name)
+			// fmt.Println("From stack:", header.Name)
 
 			if err := tarball.WriteHeader(header); err != nil {
 				panic(err)
@@ -181,9 +182,9 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			}
 			for _, dir := range dirs {
 				dir = dir[:len(dir)-5]
-				fmt.Println("DIR:", dir)
+				// fmt.Println("DIR:", dir)
 				if _, err := os.Stat(dir); os.IsNotExist(err) {
-					fmt.Println("DIR NOT EXIST:", dir)
+					// fmt.Println("DEBUG: DIR NOT EXIST:", dir)
 					continue
 				} else if err != nil {
 					panic(err)
@@ -196,12 +197,12 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			}
 		}
 
-		fmt.Println("LAYER DIRS:", layerDirs)
+		// fmt.Println("LAYER DIRS:", layerDirs)
 
 		bpMeta := make(map[string]packs.BuildpackMetadata)
 
 		for _, name := range layerDirs {
-			start := time.Now()
+			// start := time.Now()
 
 			b, err := tarDir(filepath.Join(launchDir, name), "launch/"+name)
 			if err != nil {
@@ -244,7 +245,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 				bpMeta[m[0]] = obj
 			}
 
-			fmt.Printf("Full add tar for (%s): %s (%d)\n", time.Since(start), name, len(b))
+			// fmt.Printf("Full add tar for (%s): %s (%d)\n", time.Since(start), name, len(b))
 		}
 
 		for _, bp := range bpMeta {
@@ -281,7 +282,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 		if err != nil {
 			panic(nil)
 		}
-		fmt.Println(layerID, " => ", string(layerDataJSON))
+		// fmt.Println(layerID, " => ", string(layerDataJSON))
 		addFileToTar(tarball, layerID+"/json", layerDataJSON)
 		var emptyTar bytes.Buffer
 		tar.NewWriter(&emptyTar).Close()
@@ -293,19 +294,15 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			panic(err)
 		}
 
-		fmt.Println("FINAL PARENT ID:", parentLayerID)
+		// fmt.Println("FINAL PARENT ID:", parentLayerID)
 
 		tarball.Close()
 		w.Close()
 
-		fmt.Println("**** closed tarball ****")
+		// fmt.Println("**** closed tarball: %s ****", time.Since(start))
 	}()
 
-	debugTarFile, _ := os.Create("/tmp/debug_tar_file.tar")
-	r2 := io.TeeReader(r, debugTarFile)
-	defer debugTarFile.Close()
-
-	res, err = httpc.Post("http://unix/images/load?quiet=true", "application/tar", r2)
+	res, err = httpc.Post("http://unix/images/load?quiet=true", "application/tar", r)
 	r.Close()
 	if err != nil {
 		return "", err
@@ -314,10 +311,12 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 	if res.StatusCode != 200 {
 		return "", fmt.Errorf("expected 200: actual: %d", res.StatusCode)
 	}
-	fmt.Printf("\n\nPOST: %#v\n\n", res)
-	io.Copy(os.Stdout, res.Body)
-	fmt.Println("")
-	fmt.Println("FINAL PARENT ID:", parentLayerID)
+	// fmt.Printf("\n\nPOST: %#v\n\n", res)
+	// if res.ContentLength > 0 {
+	// 	io.Copy(os.Stdout, res.Body)
+	// 	fmt.Println("")
+	// }
+	// fmt.Println("FINAL PARENT ID:", parentLayerID)
 
 	return parentLayerID, nil
 }
