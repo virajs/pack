@@ -347,6 +347,18 @@ func tarDir(srcDir, destDir string) ([]byte, error) {
 	tw := tar.NewWriter(&buf)
 	defer tw.Close()
 
+	// TODO create all of the earlier directories ???
+	tw.WriteHeader(&tar.Header{
+		Typeflag: tar.TypeDir,
+		Name:     destDir,
+		Mode:     0755,
+		ModTime:  time.Now(),
+		Uid:      1000,
+		Gid:      1000,
+		Uname:    "packs",
+		Gname:    "packs",
+	})
+
 	err := filepath.Walk(srcDir, func(file string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
