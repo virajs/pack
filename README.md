@@ -17,3 +17,12 @@ The above will create images on your local daemon. If you wish to create images 
 ```
 ./pack build myorg/myapp -p fixtures/node_app --detect-image packsdev/v3:detect --publish
 ```
+
+## Build optimized images
+
+```
+GOOS=darwin go build  -ldflags="-s -w"  -o pack_darwin ./cmd/pack/
+upx -9 pack_darwin
+GOOS=linux go build  -ldflags="-s -w"  -o pack_linux ./cmd/pack/
+upx -9 pack_linux
+```
