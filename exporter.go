@@ -114,6 +114,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 	var parentLayerID string
 	go func() {
 		tarReader := tar.NewReader(res.Body)
+		runImageJson := make(map[string][]byte)
 		for {
 			header, err := tarReader.Next()
 			if err == io.EOF {
@@ -149,9 +150,27 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 			if err := tarball.WriteHeader(header); err != nil {
 				panic(err)
 			}
-			if _, err = io.Copy(tarball, tarReader); err != nil {
-				panic(err)
+
+			if strings.HasSuffix(header.Name, "/json") {
+				buf, err := ioutil.ReadAll(tarReader)
+				if err != nil {
+					panic(err)
+				}
+				m := strings.Split(header.Name, "/")
+				runImageJson[m[0]] = buf
+				if _, err := tarball.Write(buf); err != nil {
+					panic(err)
+				}
+			} else {
+				if _, err = io.Copy(tarball, tarReader); err != nil {
+					panic(err)
+				}
 			}
+		}
+
+		var imgConfig map[string]interface{}
+		if err := json.Unmarshal(runImageJson[parentLayerID], &imgConfig); err != nil {
+			panic(err)
 		}
 
 		layerDirs := []string{"app", "config"}
@@ -239,17 +258,26 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 		}
 		layerID := fmt.Sprintf("%x", sha256.Sum256(metadataJSON))
 		addFileToTar(tarball, layerID+"/VERSION", []byte("1.0"))
-		layerData := map[string]interface{}{
-			"id":     layerID,
-			"parent": parentLayerID,
-			"os":     "linux",
-			"container_config": map[string]interface{}{
-				"Labels": map[string]interface{}{
-					"packs.sh": string(metadataJSON),
-				},
-			},
+		imgConfig["id"] = layerID
+		imgConfig["parent"] = parentLayerID
+		imgConfig["created"] = time.Now()
+		if h, ok := imgConfig["container_config"].(map[string]interface{}); ok {
+			// TODO: Keep other labels
+			h["Labels"] = map[string]interface{}{
+				"packs.sh": string(metadataJSON),
+			}
+		} else {
+			panic("could not set labels on container config")
 		}
-		layerDataJSON, err := json.Marshal(layerData)
+		if h, ok := imgConfig["config"].(map[string]interface{}); ok {
+			// TODO: Keep other labels
+			h["Labels"] = map[string]interface{}{
+				"packs.sh": string(metadataJSON),
+			}
+		} else {
+			panic("could not set labels on config")
+		}
+		layerDataJSON, err := json.Marshal(imgConfig)
 		if err != nil {
 			panic(nil)
 		}
@@ -277,7 +305,7 @@ func simpleExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName
 	r2 := io.TeeReader(r, debugTarFile)
 	defer debugTarFile.Close()
 
-	res, err = httpc.Post("http://unix/images/load", "application/tar", r2)
+	res, err = httpc.Post("http://unix/images/load?quiet=true", "application/tar", r2)
 	r.Close()
 	if err != nil {
 		return "", err
