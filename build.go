@@ -1,7 +1,7 @@
 package pack
 
 import (
-	"bytes"
+	"archive/tar"
 	"context"
 	"crypto/md5"
 	"fmt"
@@ -20,12 +20,13 @@ import (
 	"github.com/google/uuid"
 )
 
-func Build(appDir, detectImage, repoName string, publish bool) (err error) {
+func Build(appDir, buildImage, runImage, repoName string, publish bool) (err error) {
 	buildFlags := &BuildFlags{
-		AppDir:      appDir,
-		DetectImage: detectImage,
-		RepoName:    repoName,
-		Publish:     publish,
+		AppDir:     appDir,
+		BuildImage: buildImage,
+		RunImage:   runImage,
+		RepoName:   repoName,
+		Publish:    publish,
 	}
 	buildFlags.Cli, err = dockercli.NewEnvClient()
 	if err != nil {
@@ -35,11 +36,12 @@ func Build(appDir, detectImage, repoName string, publish bool) (err error) {
 }
 
 type BuildFlags struct {
-	AppDir      string
-	DetectImage string
-	RepoName    string
-	Publish     bool
-	Cli         *dockercli.Client
+	AppDir     string
+	BuildImage string
+	RunImage   string
+	RepoName   string
+	Publish    bool
+	Cli        *dockercli.Client
 }
 
 func (b *BuildFlags) Run() error {
@@ -53,20 +55,16 @@ func (b *BuildFlags) Run() error {
 	launchVolume := fmt.Sprintf("pack-launch-%x", uid)
 	workspaceVolume := fmt.Sprintf("pack-workspace-%x", uid)
 	cacheVolume := fmt.Sprintf("pack-cache-%x", md5.Sum([]byte(b.AppDir)))
-	// defer exec.Command("docker", "volume", "rm", "-f", launchVolume).Run()
-	// defer exec.Command("docker", "volume", "rm", "-f", workspaceVolume).Run()
+	defer b.Cli.VolumeRemove(context.Background(), launchVolume, true)
+	defer b.Cli.VolumeRemove(context.Background(), workspaceVolume, true)
 
 	// fmt.Println("*** COPY APP TO VOLUME:")
-	if err := copyToVolume(b.DetectImage, launchVolume, b.AppDir, "app"); err != nil {
+	if err := copyToVolume(b.BuildImage, launchVolume, b.AppDir, "app"); err != nil {
 		return err
 	}
 
 	fmt.Println("*** DETECTING:")
-	if err := b.Detect(uid, launchVolume, workspaceVolume); err != nil {
-		return err
-	}
-
-	group, err := groupToml(workspaceVolume, b.DetectImage)
+	group, err := b.Detect(uid, launchVolume, workspaceVolume)
 	if err != nil {
 		return err
 	}
@@ -77,16 +75,18 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** BUILDING:")
-	if err := b.Build(uid, group, launchVolume, workspaceVolume, cacheVolume); err != nil {
+	if err := b.Build(uid, launchVolume, workspaceVolume, cacheVolume); err != nil {
 		return err
 	}
 
 	if !b.Publish {
 		fmt.Println("*** PULLING RUN IMAGE LOCALLY:")
-		if out, err := exec.Command("docker", "pull", group.RunImage).CombinedOutput(); err != nil {
-			fmt.Println(string(out))
+		rc, err := b.Cli.ImagePull(context.Background(), b.RunImage, dockertypes.ImagePullOptions{})
+		if err != nil {
 			return err
 		}
+		io.Copy(ioutil.Discard, rc)
+		rc.Close()
 	}
 
 	fmt.Println("*** EXPORTING:")
@@ -97,10 +97,11 @@ func (b *BuildFlags) Run() error {
 	return nil
 }
 
-func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) error {
+func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) (*lifecycle.BuildpackGroup, error) {
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
-		Image: b.DetectImage,
+		Image:      b.BuildImage,
+		Entrypoint: []string{"/packs/detector"},
 	}, &container.HostConfig{
 		Binds: []string{
 			launchVolume + ":/launch",
@@ -108,21 +109,30 @@ func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) error {
 		},
 	}, nil, "pack-detect-"+uid)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	return b.runContainer(ctx, ctr.ID, "")
+	if err := b.runContainer(ctx, ctr.ID, ""); err != nil {
+		return nil, err
+	}
+
+	return b.groupToml(ctr.ID)
 }
 
 func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err error) {
-	var txt []byte
+	var shPacksBuild string
+	ctx := context.Background()
 	if !b.Publish {
-		txt, err = exec.Command("docker", "inspect", b.RepoName, "-f", `{{index .Config.Labels "sh.packs.build"}}`).Output()
-		if err != nil && len(txt) == 0 {
+		i, _, err := b.Cli.ImageInspectWithRaw(ctx, b.RepoName)
+		if dockercli.IsErrNotFound(err) {
 			fmt.Println("    No previous image foound")
+			return nil
+		}
+		if err != nil {
 			return err
 		}
+		shPacksBuild = i.Config.Labels["sh.packs.build"]
 	}
 
 	cfg := &container.Config{
@@ -144,20 +154,27 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 		cfg.OpenStdin = true
 	}
 
-	ctx := context.Background()
+	rc, err := b.Cli.ImagePull(ctx, cfg.Image, dockertypes.ImagePullOptions{})
+	if err != nil {
+		return err
+	}
+	io.Copy(ioutil.Discard, rc)
+	rc.Close()
+
 	ctr, err := b.Cli.ContainerCreate(ctx, cfg, hcfg, nil, "pack-analyze-"+uid)
 	if err != nil {
 		return err
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	return b.runContainer(ctx, ctr.ID, string(txt))
+	return b.runContainer(ctx, ctr.ID, shPacksBuild)
 }
 
-func (b *BuildFlags) Build(uid string, group lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
+func (b *BuildFlags) Build(uid, launchVolume, workspaceVolume, cacheVolume string) error {
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
-		Image: group.BuildImage,
+		Image:      b.BuildImage,
+		Entrypoint: []string{"/packs/builder"},
 	}, &container.HostConfig{
 		Binds: []string{
 			launchVolume + ":/launch",
@@ -173,12 +190,21 @@ func (b *BuildFlags) Build(uid string, group lifecycle.BuildpackGroup, launchVol
 	return b.runContainer(ctx, ctr.ID, "")
 }
 
-func (b *BuildFlags) Export(uid string, group lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
+func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
 	if b.Publish {
 		ctx := context.Background()
+		image := "dgodd/packsv3:export"
+
+		rc, err := b.Cli.ImagePull(ctx, image, dockertypes.ImagePullOptions{})
+		if err != nil {
+			return err
+		}
+		io.Copy(ioutil.Discard, rc)
+		rc.Close()
+
 		ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
-			Image: "dgodd/packsv3:export",
-			Env:   []string{"PACK_USE_HELPERS=true", "PACK_RUN_IMAGE=" + group.RunImage},
+			Image: image,
+			Env:   []string{"PACK_USE_HELPERS=true", "PACK_RUN_IMAGE=" + b.RunImage},
 			Cmd:   []string{b.RepoName},
 		}, &container.HostConfig{
 			Binds: []string{
@@ -197,15 +223,16 @@ func (b *BuildFlags) Export(uid string, group lifecycle.BuildpackGroup, launchVo
 
 	fullStart := time.Now()
 	start := time.Now()
-	localLaunchDir, cleanup, err := exportVolume(b.DetectImage, launchVolume)
+	localLaunchDir, _, err := exportVolume(b.BuildImage, launchVolume)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	// TODO uncomment
+	// defer cleanup()
 	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
 	start = time.Now()
 
-	_, err = dockerBuildExport(group, localLaunchDir, b.RepoName, group.RunImage)
+	_, err = dockerBuildExport(group, localLaunchDir, b.RepoName, b.RunImage)
 	if err != nil {
 		return err
 	}
@@ -255,21 +282,22 @@ func copyToVolume(image, volName, srcDir, destDir string) error {
 	return nil
 }
 
-func groupToml(workspaceVolume, detectImage string) (lifecycle.BuildpackGroup, error) {
-	var buf bytes.Buffer
-	cmd := exec.Command("docker", "run", "--rm", "-v", workspaceVolume+":/workspace:ro", "--entrypoint", "", detectImage, "bash", "-c", "cat $PACK_BP_GROUP_PATH")
-	cmd.Stdout = &buf
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return lifecycle.BuildpackGroup{}, err
+func (b *BuildFlags) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) {
+	ctx := context.Background()
+	rc, _, err := b.Cli.CopyFromContainer(ctx, ctrID, "/workspace/group.toml")
+	if err != nil {
+		return nil, err
 	}
-
+	defer rc.Close()
+	tr := tar.NewReader(rc)
+	if _, err = tr.Next(); err != nil {
+		return nil, err
+	}
 	var group lifecycle.BuildpackGroup
-	if _, err := toml.Decode(buf.String(), &group); err != nil {
-		return lifecycle.BuildpackGroup{}, err
+	if _, err := toml.DecodeReader(tr, &group); err != nil {
+		return nil, err
 	}
-
-	return group, nil
+	return &group, nil
 }
 
 func (b *BuildFlags) runContainer(ctx context.Context, id, stdin string) error {

@@ -25,7 +25,8 @@ func main() {
 		},
 	}
 	buildCommand.Flags().StringVarP(&buildFlags.AppDir, "path", "p", wd, "path to app dir")
-	buildCommand.Flags().StringVar(&buildFlags.DetectImage, "detect-image", "dgodd/packsv3:detect", "detect image")
+	buildCommand.Flags().StringVar(&buildFlags.BuildImage, "build-image", "dgodd/packsv3:build", "build image")
+	buildCommand.Flags().StringVar(&buildFlags.RunImage, "run-image", "dgodd/packsv3:run", "run image")
 	buildCommand.Flags().BoolVar(&buildFlags.Publish, "publish", false, "publish to registry")
 
 	var createFlags pack.Create

@@ -14,7 +14,7 @@ import (
 	"github.com/buildpack/packs"
 )
 
-func dockerBuildExport(group lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
+func dockerBuildExport(group *lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
 	var dockerFile string
 	dockerFile += "FROM " + stackName + "\n"
 	dockerFile += "ADD --chown=packs:packs app /launch/app\n"
