@@ -72,45 +72,8 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
-	if b.Publish {
-		cmd := exec.Command("docker", "run",
-			"--rm",
-			"-v", launchVolume+":/launch",
-			"-v", workspaceVolume+":/workspace",
-			// TODO below line assumes too many things
-			"-v", filepath.Join(os.Getenv("HOME"), ".docker")+":/home/packs/.docker:ro",
-			"-e", "PACK_USE_HELPERS=true",
-			"dgodd/packsv3:analyze",
-			b.RepoName,
-		)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return err
-		}
-	} else {
-		txt, err := exec.Command("docker", "inspect", b.RepoName, "-f", `{{index .Config.Labels "sh.packs.build"}}`).Output()
-		// fmt.Println(string(txt), err)
-		if err == nil && len(txt) > 0 {
-			cmd := exec.Command(
-				"docker", "run",
-				"-i", // so that stdin works
-				"--rm",
-				"-v", launchVolume+":/launch",
-				"-v", workspaceVolume+":/workspace",
-				"dgodd/packsv3:analyze",
-				"-metadata-on-stdin",
-				b.RepoName,
-			)
-			cmd.Stdin = bytes.NewReader(txt)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				return err
-			}
-		} else {
-			fmt.Println("    No previous image foound")
-		}
+	if err := b.Analyze(uid, launchVolume, workspaceVolume); err != nil {
+		return err
 	}
 
 	fmt.Println("*** BUILDING:")
@@ -196,11 +159,48 @@ func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) error {
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	if err := b.runContainer(ctx, ctr.ID); err != nil {
+	return b.runContainer(ctx, ctr.ID, "")
+}
+
+func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err error) {
+	var txt []byte
+	if !b.Publish {
+		txt, err = exec.Command("docker", "inspect", b.RepoName, "-f", `{{index .Config.Labels "sh.packs.build"}}`).Output()
+		if err != nil && len(txt) == 0 {
+			fmt.Println("    No previous image foound")
+			return err
+		}
+	}
+
+	cfg := &container.Config{
+		Image: "dgodd/packsv3:analyze",
+	}
+	hcfg := &container.HostConfig{
+		Binds: []string{
+			launchVolume + ":/launch",
+			workspaceVolume + ":/workspace",
+		},
+	}
+
+	if b.Publish {
+		cfg.Env = []string{"PACK_USE_HELPERS=true"}
+		cfg.Cmd = []string{b.RepoName}
+		hcfg.Binds = append(hcfg.Binds, filepath.Join(os.Getenv("HOME"), ".docker")+":/home/packs/.docker:ro")
+	} else {
+		cfg.Cmd = []string{"-metadata-on-stdin", b.RepoName}
+		cfg.OpenStdin = true
+	}
+
+	ctx := context.Background()
+	ctr, err := b.Cli.ContainerCreate(ctx, cfg, hcfg, nil, "pack-analyze-"+uid)
+	if err != nil {
 		return err
 	}
-	return nil
+	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+
+	return b.runContainer(ctx, ctr.ID, string(txt))
 }
+
 func exportVolume(image, volName string) (string, func(), error) {
 	tmpDir, err := ioutil.TempDir("", "pack.build.")
 	if err != nil {
@@ -260,9 +260,20 @@ func groupToml(workspaceVolume, detectImage string) (lifecycle.BuildpackGroup, e
 	return group, nil
 }
 
-func (b *BuildFlags) runContainer(ctx context.Context, id string) error {
+func (b *BuildFlags) runContainer(ctx context.Context, id, stdin string) error {
 	if err := b.Cli.ContainerStart(ctx, id, dockertypes.ContainerStartOptions{}); err != nil {
 		return err
+	}
+	if len(stdin) > 0 {
+		res, err := b.Cli.ContainerAttach(ctx, id, dockertypes.ContainerAttachOptions{
+			Stream: true,
+			Stdin:  true,
+		})
+		if err != nil {
+			return err
+		}
+		res.Conn.Write([]byte(stdin))
+		res.Close()
 	}
 	out, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
 		ShowStdout: true,
