@@ -77,16 +77,7 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** BUILDING:")
-	cmd := exec.Command("docker", "run",
-		"--rm",
-		"-v", launchVolume+":/launch",
-		"-v", workspaceVolume+":/workspace",
-		"-v", cacheVolume+":/cache",
-		group.BuildImage,
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := b.Build(uid, group, launchVolume, workspaceVolume, cacheVolume); err != nil {
 		return err
 	}
 
@@ -99,44 +90,8 @@ func (b *BuildFlags) Run() error {
 	}
 
 	fmt.Println("*** EXPORTING:")
-	if b.Publish {
-		cmd = exec.Command("docker", "run",
-			"--rm",
-			"-v", launchVolume+":/launch",
-			"-v", workspaceVolume+":/workspace", // TODO I think this can be deleted
-			// TODO below line assumes too many things
-			"-v", filepath.Join(os.Getenv("HOME"), ".docker")+":/home/packs/.docker:ro",
-			"-e", "PACK_USE_HELPERS=true",
-			"-e", "PACK_RUN_IMAGE="+group.RunImage,
-			"dgodd/packsv3:export",
-			b.RepoName,
-		)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return err
-		}
-	} else {
-		fullStart := time.Now()
-		start := time.Now()
-		var localLaunchDir string
-		cleanup := func() {}
-		if !b.Publish {
-			localLaunchDir, cleanup, err = exportVolume(b.DetectImage, launchVolume)
-			if err != nil {
-				return err
-			}
-
-			fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
-			start = time.Now()
-		}
-		defer cleanup()
-
-		_, err = dockerBuildExport(group, localLaunchDir, b.RepoName, group.RunImage)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("    create image: %s (%s)\n", time.Since(start), time.Since(fullStart))
+	if err := b.Export(uid, group, launchVolume, workspaceVolume, cacheVolume); err != nil {
+		return err
 	}
 
 	return nil
@@ -146,8 +101,6 @@ func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) error {
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 		Image: b.DetectImage,
-		// Entrypoint:   []string{},
-		// Cmd:          []string{"find", "/launch"},
 	}, &container.HostConfig{
 		Binds: []string{
 			launchVolume + ":/launch",
@@ -199,6 +152,65 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
 	return b.runContainer(ctx, ctr.ID, string(txt))
+}
+
+func (b *BuildFlags) Build(uid string, group lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
+	ctx := context.Background()
+	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
+		Image: group.BuildImage,
+	}, &container.HostConfig{
+		Binds: []string{
+			launchVolume + ":/launch",
+			workspaceVolume + ":/workspace",
+			cacheVolume + ":/cache",
+		},
+	}, nil, "pack-build-"+uid)
+	if err != nil {
+		return err
+	}
+	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+
+	return b.runContainer(ctx, ctr.ID, "")
+}
+
+func (b *BuildFlags) Export(uid string, group lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
+	if b.Publish {
+		ctx := context.Background()
+		ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
+			Image: "dgodd/packsv3:export",
+			Env:   []string{"PACK_USE_HELPERS=true", "PACK_RUN_IMAGE=" + group.RunImage},
+			Cmd:   []string{b.RepoName},
+		}, &container.HostConfig{
+			Binds: []string{
+				launchVolume + ":/launch",       // TODO I think this can be READONLY
+				workspaceVolume + ":/workspace", // TODO I think this can be deleted
+				filepath.Join(os.Getenv("HOME"), ".docker") + ":/home/packs/.docker:ro",
+			},
+		}, nil, "pack-export-"+uid)
+		if err != nil {
+			return err
+		}
+		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+
+		return b.runContainer(ctx, ctr.ID, "")
+	}
+
+	fullStart := time.Now()
+	start := time.Now()
+	localLaunchDir, cleanup, err := exportVolume(b.DetectImage, launchVolume)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
+	start = time.Now()
+
+	_, err = dockerBuildExport(group, localLaunchDir, b.RepoName, group.RunImage)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("    create image: %s (%s)\n", time.Since(start), time.Since(fullStart))
+	return nil
 }
 
 func exportVolume(image, volName string) (string, func(), error) {
@@ -290,6 +302,8 @@ func (b *BuildFlags) runContainer(ctx context.Context, id, stdin string) error {
 	select {
 	case w := <-waitC:
 		if w.StatusCode != 0 {
+			out.Close()
+			time.Sleep(time.Second) // TODO delete this, make sure all flushed
 			return fmt.Errorf("container run: non zero exit: %d: %s", w.StatusCode, w.Error)
 		}
 	case err := <-errC:
