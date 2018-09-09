@@ -19,11 +19,15 @@ import (
 
 func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVolume, launchDir, repoName, stackName string) (string, error) {
 	ctx := context.Background()
-	image := stackName
+	stackInspect, _, err := b.Cli.ImageInspectWithRaw(ctx, stackName)
+	if err != nil {
+		return "", err
+	}
+	image := stackInspect.ID
 	metadata := packs.BuildMetadata{
 		RunImage: packs.RunImageMetadata{
 			Name: stackName,
-			SHA:  "TODO",
+			SHA:  stackInspect.RootFS.Layers[len(stackInspect.RootFS.Layers)-1],
 		},
 		App:        packs.AppMetadata{},
 		Config:     packs.ConfigMetadata{},
@@ -52,11 +56,10 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 		if err != nil {
 			return "", err
 		}
-		fmt.Println("ADD LAYER:", res.ID)
+		// fmt.Println("ADD LAYER:", res.ID)
 		return res.ID, nil
 	}
 
-	var err error
 	image, err = mvDir(image, "app")
 	if err != nil {
 		return "", err
