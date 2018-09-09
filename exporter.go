@@ -23,7 +23,6 @@ func (b *BuildFlags) topLayerForImage(image string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	fmt.Println(i.RootFS.Layers)
 	return i.ID, i.RootFS.Layers[len(i.RootFS.Layers)-1], nil
 }
 
@@ -112,7 +111,18 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 					return "", err
 				}
 			} else {
-				// dockerFile += fmt.Sprintf("COPY --from=prev --chown=packs:packs /launch/%s /launch/%s\n", dir, dir)
+				dockerFile := fmt.Sprintf("FROM %s AS prev\n\nFROM %s\nCOPY --from=prev --chown=packs:packs /launch/%s /launch/%s\n", repoName, image, dir, dir)
+				cmd := exec.Command(
+					"docker", "build",
+					// "-t", repoName,
+					"-",
+				)
+				cmd.Stdin = strings.NewReader(dockerFile)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					return "", err
+				}
 				fmt.Println("TODO: Need to add dir from prev image:", dir)
 				continue
 			}

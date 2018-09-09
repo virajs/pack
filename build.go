@@ -152,8 +152,10 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	} else {
 		cfg.Cmd = []string{"-metadata-on-stdin", b.RepoName}
 		cfg.OpenStdin = true
+		cfg.StdinOnce = true
 	}
 
+	fmt.Println("    pull image")
 	rc, err := b.Cli.ImagePull(ctx, cfg.Image, dockertypes.ImagePullOptions{})
 	if err != nil {
 		return err
@@ -161,12 +163,16 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	io.Copy(ioutil.Discard, rc)
 	rc.Close()
 
+	fmt.Println("    create container")
 	ctr, err := b.Cli.ContainerCreate(ctx, cfg, hcfg, nil, "pack-analyze-"+uid)
 	if err != nil {
 		return err
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
+	fmt.Println("    run container")
+	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// defer cancel()
 	return b.runContainer(ctx, ctr.ID, shPacksBuild)
 }
 
@@ -314,6 +320,7 @@ func (b *BuildFlags) runContainer(ctx context.Context, id, stdin string) error {
 			return err
 		}
 		res.Conn.Write([]byte(stdin))
+		res.Conn.Close()
 		res.Close()
 	}
 	out, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
@@ -330,13 +337,13 @@ func (b *BuildFlags) runContainer(ctx context.Context, id, stdin string) error {
 	waitC, errC := b.Cli.ContainerWait(ctx, id, "")
 	select {
 	case w := <-waitC:
+		fmt.Println("received on waitC")
 		if w.StatusCode != 0 {
-			out.Close()
-			time.Sleep(time.Second) // TODO delete this, make sure all flushed
 			return fmt.Errorf("container run: non zero exit: %d: %s", w.StatusCode, w.Error)
 		}
+		return nil
 	case err := <-errC:
+		fmt.Println("received on errC")
 		return err
 	}
-	return nil
 }
