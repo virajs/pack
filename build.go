@@ -2,6 +2,7 @@ package pack
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"fmt"
@@ -113,7 +114,7 @@ func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) (*lifecyc
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	if err := b.runContainer(ctx, ctr.ID, ""); err != nil {
+	if err := b.runContainer(ctx, ctr.ID); err != nil {
 		return nil, err
 	}
 
@@ -126,13 +127,17 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	if !b.Publish {
 		i, _, err := b.Cli.ImageInspectWithRaw(ctx, b.RepoName)
 		if dockercli.IsErrNotFound(err) {
-			fmt.Println("    No previous image foound")
+			fmt.Println("    No previous image found")
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		shPacksBuild = i.Config.Labels["sh.packs.build"]
+		if shPacksBuild == "" {
+			fmt.Println("    Previous image is missing label 'sh.packs.build'")
+			return nil
+		}
 	}
 
 	cfg := &container.Config{
@@ -150,7 +155,7 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 		cfg.Cmd = []string{b.RepoName}
 		hcfg.Binds = append(hcfg.Binds, filepath.Join(os.Getenv("HOME"), ".docker")+":/home/packs/.docker:ro")
 	} else {
-		cfg.Cmd = []string{"-metadata-on-stdin", b.RepoName}
+		cfg.Cmd = []string{"-metadata", "/tmp/metadata.json", b.RepoName}
 		cfg.OpenStdin = true
 		cfg.StdinOnce = true
 	}
@@ -168,12 +173,29 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	if err != nil {
 		return err
 	}
-	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+	// defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+	fmt.Println("CID:", ctr.ID)
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	tw.WriteHeader(&tar.Header{
+		Name: "metadata.json",
+		Mode: 0666,
+		Size: int64(len(shPacksBuild)),
+	})
+	tw.Write([]byte(shPacksBuild))
+	tw.Close()
+	fmt.Println("shPacksBuild:", len(shPacksBuild), ":", string(shPacksBuild))
+	fmt.Println("Size of metadata.tar:", len(buf.Bytes()))
+	fmt.Println(ioutil.WriteFile("/tmp/metadata.tar", buf.Bytes(), 0666))
+	if err := b.Cli.CopyToContainer(ctx, ctr.ID, "/tmp", bytes.NewReader(buf.Bytes()), dockertypes.CopyToContainerOptions{}); err != nil {
+		return err
+	}
 
 	fmt.Println("    run container")
 	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	// defer cancel()
-	return b.runContainer(ctx, ctr.ID, shPacksBuild)
+	return b.runContainer(ctx, ctr.ID)
 }
 
 func (b *BuildFlags) Build(uid, launchVolume, workspaceVolume, cacheVolume string) error {
@@ -193,7 +215,7 @@ func (b *BuildFlags) Build(uid, launchVolume, workspaceVolume, cacheVolume strin
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	return b.runContainer(ctx, ctr.ID, "")
+	return b.runContainer(ctx, ctr.ID)
 }
 
 func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
@@ -224,7 +246,7 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 		}
 		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-		return b.runContainer(ctx, ctr.ID, "")
+		return b.runContainer(ctx, ctr.ID)
 	}
 
 	fullStart := time.Now()
@@ -307,21 +329,9 @@ func (b *BuildFlags) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) 
 	return &group, nil
 }
 
-func (b *BuildFlags) runContainer(ctx context.Context, id, stdin string) error {
+func (b *BuildFlags) runContainer(ctx context.Context, id string) error {
 	if err := b.Cli.ContainerStart(ctx, id, dockertypes.ContainerStartOptions{}); err != nil {
 		return err
-	}
-	if len(stdin) > 0 {
-		res, err := b.Cli.ContainerAttach(ctx, id, dockertypes.ContainerAttachOptions{
-			Stream: true,
-			Stdin:  true,
-		})
-		if err != nil {
-			return err
-		}
-		res.Conn.Write([]byte(stdin))
-		res.Conn.Close()
-		res.Close()
 	}
 	out, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
 		ShowStdout: true,

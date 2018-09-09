@@ -57,7 +57,7 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 			return "", "", err
 		}
 		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
-		if err := b.runContainer(ctx, ctr.ID, ""); err != nil {
+		if err := b.runContainer(ctx, ctr.ID); err != nil {
 			return "", "", err
 		}
 		res, err := b.Cli.ContainerCommit(ctx, ctr.ID, dockertypes.ContainerCommitOptions{})
