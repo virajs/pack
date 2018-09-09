@@ -2,7 +2,6 @@ package pack
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"crypto/md5"
 	"fmt"
@@ -175,16 +174,11 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	tw.WriteHeader(&tar.Header{
-		Name: "metadata.json",
-		Mode: 0666,
-		Size: int64(len(shPacksBuild)),
-	})
-	tw.Write([]byte(shPacksBuild))
-	tw.Close()
-	if err := b.Cli.CopyToContainer(ctx, ctr.ID, "/tmp", bytes.NewReader(buf.Bytes()), dockertypes.CopyToContainerOptions{}); err != nil {
+	tr, err := singleFileTar("metadata.json", shPacksBuild)
+	if err != nil {
+		return err
+	}
+	if err := b.Cli.CopyToContainer(ctx, ctr.ID, "/tmp", tr, dockertypes.CopyToContainerOptions{}); err != nil {
 		return err
 	}
 
