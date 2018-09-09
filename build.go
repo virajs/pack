@@ -173,8 +173,7 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	if err != nil {
 		return err
 	}
-	// defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
-	fmt.Println("CID:", ctr.ID)
+	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -185,16 +184,10 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	})
 	tw.Write([]byte(shPacksBuild))
 	tw.Close()
-	fmt.Println("shPacksBuild:", len(shPacksBuild), ":", string(shPacksBuild))
-	fmt.Println("Size of metadata.tar:", len(buf.Bytes()))
-	fmt.Println(ioutil.WriteFile("/tmp/metadata.tar", buf.Bytes(), 0666))
 	if err := b.Cli.CopyToContainer(ctx, ctr.ID, "/tmp", bytes.NewReader(buf.Bytes()), dockertypes.CopyToContainerOptions{}); err != nil {
 		return err
 	}
 
-	fmt.Println("    run container")
-	// ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	// defer cancel()
 	return b.runContainer(ctx, ctr.ID)
 }
 
