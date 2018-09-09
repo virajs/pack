@@ -119,7 +119,26 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 		})
 	}
 
-	fmt.Println(json.Marshal(metadata))
+	shPacksBuild, err := json.Marshal(metadata)
+	if err != nil {
+		return "", err
+	}
+	// labelImage
+	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
+		Image: image,
+		Labels: map[string]string{
+			"sh.packs.build": string(shPacksBuild),
+		},
+	}, nil, nil, "")
+	if err != nil {
+		return "", err
+	}
+	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+	res, err := b.Cli.ContainerCommit(ctx, ctr.ID, dockertypes.ContainerCommitOptions{})
+	if err != nil {
+		return "", err
+	}
+	image = res.ID
 
 	if err := b.Cli.ImageTag(ctx, image, repoName); err != nil {
 		return "", err
