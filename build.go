@@ -69,10 +69,10 @@ func (b *BuildFlags) Run() error {
 		return err
 	}
 
-	// fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
-	// if err := b.Analyze(uid, launchVolume, workspaceVolume); err != nil {
-	// 	return err
-	// }
+	fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
+	if err := b.Analyze(uid, launchVolume, workspaceVolume); err != nil {
+		return err
+	}
 
 	fmt.Println("*** BUILDING:")
 	if err := b.Build(uid, launchVolume, workspaceVolume, cacheVolume); err != nil {

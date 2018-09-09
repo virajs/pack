@@ -17,24 +17,33 @@ import (
 	"github.com/docker/docker/api/types/container"
 )
 
+func (b *BuildFlags) topLayerForImage(image string) (string, string, error) {
+	ctx := context.Background()
+	i, _, err := b.Cli.ImageInspectWithRaw(ctx, image)
+	if err != nil {
+		return "", "", err
+	}
+	fmt.Println(i.RootFS.Layers)
+	return i.ID, i.RootFS.Layers[len(i.RootFS.Layers)-1], nil
+}
+
 func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVolume, launchDir, repoName, stackName string) (string, error) {
 	ctx := context.Background()
-	stackInspect, _, err := b.Cli.ImageInspectWithRaw(ctx, stackName)
+	image, stackTopLayer, err := b.topLayerForImage(stackName)
 	if err != nil {
 		return "", err
 	}
-	image := stackInspect.ID
 	metadata := packs.BuildMetadata{
 		RunImage: packs.RunImageMetadata{
 			Name: stackName,
-			SHA:  stackInspect.RootFS.Layers[len(stackInspect.RootFS.Layers)-1],
+			SHA:  stackTopLayer,
 		},
 		App:        packs.AppMetadata{},
 		Config:     packs.ConfigMetadata{},
 		Buildpacks: []packs.BuildpackMetadata{},
 	}
 
-	mvDir := func(image, name string) (string, error) {
+	mvDir := func(image, name string) (string, string, error) {
 		ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 			Image:      image,
 			User:       "root",
@@ -46,31 +55,32 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 			},
 		}, nil, "")
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 		if err := b.runContainer(ctx, ctr.ID, ""); err != nil {
-			return "", err
+			return "", "", err
 		}
 		res, err := b.Cli.ContainerCommit(ctx, ctr.ID, dockertypes.ContainerCommitOptions{})
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		// fmt.Println("ADD LAYER:", res.ID)
-		return res.ID, nil
+		return b.topLayerForImage(res.ID)
 	}
 
-	image, err = mvDir(image, "app")
+	var topLayer string
+	image, topLayer, err = mvDir(image, "app")
 	if err != nil {
 		return "", err
 	}
-	metadata.App.SHA = image
+	metadata.App.SHA = topLayer
 
-	image, err = mvDir(image, "config")
+	image, topLayer, err = mvDir(image, "config")
 	if err != nil {
 		return "", err
 	}
-	metadata.Config.SHA = image
+	metadata.Config.SHA = topLayer
 
 	for _, buildpack := range group.Buildpacks {
 		layers := make(map[string]packs.LayerMetadata)
@@ -97,7 +107,7 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 				return "", err
 			}
 			if exists {
-				image, err = mvDir(image, dir)
+				image, topLayer, err = mvDir(image, dir)
 				if err != nil {
 					return "", err
 				}
@@ -112,7 +122,7 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 				return "", err
 			}
 			layers[name] = packs.LayerMetadata{
-				SHA:  image,
+				SHA:  topLayer,
 				Data: data,
 			}
 		}
