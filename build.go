@@ -69,10 +69,10 @@ func (b *BuildFlags) Run() error {
 		return err
 	}
 
-	fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
-	if err := b.Analyze(uid, launchVolume, workspaceVolume); err != nil {
-		return err
-	}
+	// fmt.Println("*** ANALYZING: Reading information from previous image for possible re-use")
+	// if err := b.Analyze(uid, launchVolume, workspaceVolume); err != nil {
+	// 	return err
+	// }
 
 	fmt.Println("*** BUILDING:")
 	if err := b.Build(uid, launchVolume, workspaceVolume, cacheVolume); err != nil {
@@ -232,7 +232,8 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
 	start = time.Now()
 
-	_, err = dockerBuildExport(group, localLaunchDir, b.RepoName, b.RunImage)
+	// _, err = dockerBuildExport(group, localLaunchDir, b.RepoName, b.RunImage)
+	_, err = b.dockerBuildExport(group, launchVolume, localLaunchDir, b.RepoName, b.RunImage)
 	if err != nil {
 		return err
 	}

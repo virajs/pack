@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -12,9 +13,121 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/packs"
+	dockertypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 )
 
-func dockerBuildExport(group *lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
+func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVolume, launchDir, repoName, stackName string) (string, error) {
+	ctx := context.Background()
+	image := stackName
+	metadata := packs.BuildMetadata{
+		RunImage: packs.RunImageMetadata{
+			Name: stackName,
+			SHA:  "TODO",
+		},
+		App:        packs.AppMetadata{},
+		Config:     packs.ConfigMetadata{},
+		Buildpacks: []packs.BuildpackMetadata{},
+	}
+
+	mvDir := func(image, name string) (string, error) {
+		ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
+			Image:      image,
+			User:       "root",
+			Entrypoint: []string{},
+			Cmd:        []string{"bash", "-c", fmt.Sprintf(`mkdir -p "$(dirname /launch/%s)" && mv "/launch-volume/%s" "/launch/%s" && chown -R packs:packs "/launch/"`, name, name, name)},
+		}, &container.HostConfig{
+			Binds: []string{
+				launchVolume + ":/launch-volume",
+			},
+		}, nil, "")
+		if err != nil {
+			return "", err
+		}
+		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+		if err := b.runContainer(ctx, ctr.ID, ""); err != nil {
+			return "", err
+		}
+		res, err := b.Cli.ContainerCommit(ctx, ctr.ID, dockertypes.ContainerCommitOptions{})
+		if err != nil {
+			return "", err
+		}
+		fmt.Println("ADD LAYER:", res.ID)
+		return res.ID, nil
+	}
+
+	var err error
+	image, err = mvDir(image, "app")
+	if err != nil {
+		return "", err
+	}
+	metadata.App.SHA = image
+
+	image, err = mvDir(image, "config")
+	if err != nil {
+		return "", err
+	}
+	metadata.Config.SHA = image
+
+	for _, buildpack := range group.Buildpacks {
+		layers := make(map[string]packs.LayerMetadata)
+		dirs, err := filepath.Glob(filepath.Join(launchDir, buildpack.ID, "*.toml"))
+		if err != nil {
+			return "", err
+		}
+		for _, tomlFile := range dirs {
+			dir := strings.TrimSuffix(tomlFile, ".toml")
+			name := filepath.Base(dir)
+			if name == "launch" {
+				continue
+			}
+			exists := true
+			if _, err := os.Stat(dir); err != nil {
+				if os.IsNotExist(err) {
+					exists = false
+				} else {
+					return "", err
+				}
+			}
+			dir, err = filepath.Rel(launchDir, dir)
+			if err != nil {
+				return "", err
+			}
+			if exists {
+				image, err = mvDir(image, dir)
+				if err != nil {
+					return "", err
+				}
+			} else {
+				// dockerFile += fmt.Sprintf("COPY --from=prev --chown=packs:packs /launch/%s /launch/%s\n", dir, dir)
+				fmt.Println("TODO: Need to add dir from prev image:", dir)
+				continue
+			}
+
+			var data interface{}
+			if _, err := toml.DecodeFile(tomlFile, &data); err != nil {
+				return "", err
+			}
+			layers[name] = packs.LayerMetadata{
+				SHA:  image,
+				Data: data,
+			}
+		}
+		metadata.Buildpacks = append(metadata.Buildpacks, packs.BuildpackMetadata{
+			Key:    buildpack.ID,
+			Layers: layers,
+		})
+	}
+
+	fmt.Println(json.Marshal(metadata))
+
+	if err := b.Cli.ImageTag(ctx, image, repoName); err != nil {
+		return "", err
+	}
+	return image, nil
+}
+
+func dockerBuildExportOLD(group *lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
 	var dockerFile string
 	dockerFile += "FROM " + stackName + "\n"
 	dockerFile += "ADD --chown=packs:packs app /launch/app\n"
