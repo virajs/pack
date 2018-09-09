@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,7 +113,11 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 			} else {
 				fmt.Println("Add dir from prev image:", dir)
 				dockerfile := fmt.Sprintf("FROM %s AS prev\n\nFROM %s\nCOPY --from=prev --chown=packs:packs /launch/%s /launch/%s\n", repoName, image, dir, dir)
-				image, topLayer, err = b.dockerBuild(dockerfile)
+				image, err = dockerBuild(b.Cli, dockerfile, ioutil.Discard)
+				if err != nil {
+					return "", err
+				}
+				image, topLayer, err = b.topLayerForImage(image)
 				if err != nil {
 					return "", err
 				}
