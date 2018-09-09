@@ -334,13 +334,11 @@ func (b *BuildFlags) runContainer(ctx context.Context, id string) error {
 	waitC, errC := b.Cli.ContainerWait(ctx, id, "")
 	select {
 	case w := <-waitC:
-		fmt.Println("received on waitC")
 		if w.StatusCode != 0 {
 			return fmt.Errorf("container run: non zero exit: %d: %s", w.StatusCode, w.Error)
 		}
 		return nil
 	case err := <-errC:
-		fmt.Println("received on errC")
 		return err
 	}
 }

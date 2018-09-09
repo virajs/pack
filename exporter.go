@@ -69,12 +69,14 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 	}
 
 	var topLayer string
+	fmt.Println("    add dir: app")
 	image, topLayer, err = mvDir(image, "app")
 	if err != nil {
 		return "", err
 	}
 	metadata.App.SHA = topLayer
 
+	fmt.Println("    add dir: config")
 	image, topLayer, err = mvDir(image, "config")
 	if err != nil {
 		return "", err
@@ -106,12 +108,13 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 				return "", err
 			}
 			if exists {
+				fmt.Println("    add dir:", dir)
 				image, topLayer, err = mvDir(image, dir)
 				if err != nil {
 					return "", err
 				}
 			} else {
-				fmt.Println("Add dir from prev image:", dir)
+				fmt.Println("    add dir from prev image:", dir)
 				dockerfile := fmt.Sprintf("FROM %s AS prev\n\nFROM %s\nCOPY --from=prev --chown=packs:packs /launch/%s /launch/%s\n", repoName, image, dir, dir)
 				image, err = dockerBuild(b.Cli, dockerfile, ioutil.Discard)
 				if err != nil {
