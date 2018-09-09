@@ -123,12 +123,22 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 	if err != nil {
 		return "", err
 	}
-	// labelImage
+	image, err = b.addLabelToImage(image, map[string]string{"sh.packs.build": string(shPacksBuild)})
+	if err != nil {
+		return "", err
+	}
+
+	if err := b.Cli.ImageTag(ctx, image, repoName); err != nil {
+		return "", err
+	}
+	return image, nil
+}
+
+func (b *BuildFlags) addLabelToImage(image string, labels map[string]string) (string, error) {
+	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
-		Image: image,
-		Labels: map[string]string{
-			"sh.packs.build": string(shPacksBuild),
-		},
+		Image:  image,
+		Labels: labels,
 	}, nil, nil, "")
 	if err != nil {
 		return "", err
@@ -138,12 +148,7 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 	if err != nil {
 		return "", err
 	}
-	image = res.ID
-
-	if err := b.Cli.ImageTag(ctx, image, repoName); err != nil {
-		return "", err
-	}
-	return image, nil
+	return res.ID, nil
 }
 
 func dockerBuildExportOLD(group *lifecycle.BuildpackGroup, launchDir, repoName, stackName string) (string, error) {
