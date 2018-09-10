@@ -45,7 +45,7 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 			Image:      image,
 			User:       "root",
 			Entrypoint: []string{},
-			Cmd:        []string{"bash", "-c", fmt.Sprintf(`mkdir -p "$(dirname /launch/%s)" && mv "/launch-volume/%s" "/launch/%s" && chown -R packs:packs "/launch/"`, name, name, name)},
+			Cmd:        []string{"bash", "-c", fmt.Sprintf(`mkdir -p "$(dirname /launch/%s)" && chown packs:packs "$(dirname /launch/%s)" && su packs -c 'cp -r "/launch-volume/%s" "/launch/%s"'`, name, name, name, name)},
 		}, &container.HostConfig{
 			Binds: []string{
 				launchVolume + ":/launch-volume",
@@ -67,19 +67,6 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 	}
 
 	var topLayer string
-	fmt.Println("    add dir: app")
-	image, topLayer, err = mvDir(image, "app")
-	if err != nil {
-		return "", err
-	}
-	metadata.App.SHA = topLayer
-
-	fmt.Println("    add dir: config")
-	image, topLayer, err = mvDir(image, "config")
-	if err != nil {
-		return "", err
-	}
-	metadata.Config.SHA = topLayer
 
 	for _, buildpack := range group.Buildpacks {
 		layers := make(map[string]packs.LayerMetadata)
@@ -114,6 +101,20 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 			Layers: layers,
 		})
 	}
+
+	fmt.Println("    add dir: config")
+	image, topLayer, err = mvDir(image, "config")
+	if err != nil {
+		return "", err
+	}
+	metadata.Config.SHA = topLayer
+
+	fmt.Println("    add dir: app")
+	image, topLayer, err = mvDir(image, "app")
+	if err != nil {
+		return "", err
+	}
+	metadata.App.SHA = topLayer
 
 	shPacksBuild, err := json.Marshal(metadata)
 	if err != nil {
