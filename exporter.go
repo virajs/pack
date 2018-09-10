@@ -7,10 +7,8 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/packs"
 	dockertypes "github.com/docker/docker/api/types"
@@ -26,7 +24,7 @@ func (b *BuildFlags) topLayerForImage(image string) (string, string, error) {
 	return i.ID, i.RootFS.Layers[len(i.RootFS.Layers)-1], nil
 }
 
-func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVolume, launchDir, repoName, stackName string) (string, error) {
+func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVolume string, launchData LaunchData, repoName, stackName string) (string, error) {
 	ctx := context.Background()
 	image, stackTopLayer, err := b.topLayerForImage(stackName)
 	if err != nil {
@@ -57,7 +55,7 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 			return "", "", err
 		}
 		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
-		if err := b.runContainer(ctx, ctr.ID, os.Stdout); err != nil {
+		if err := b.runContainer(ctx, ctr.ID, os.Stdout, os.Stderr); err != nil {
 			return "", "", err
 		}
 		res, err := b.Cli.ContainerCommit(ctx, ctr.ID, dockertypes.ContainerCommitOptions{})
@@ -85,29 +83,10 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 
 	for _, buildpack := range group.Buildpacks {
 		layers := make(map[string]packs.LayerMetadata)
-		dirs, err := filepath.Glob(filepath.Join(launchDir, buildpack.ID, "*.toml"))
-		if err != nil {
-			return "", err
-		}
-		for _, tomlFile := range dirs {
-			dir := strings.TrimSuffix(tomlFile, ".toml")
-			name := filepath.Base(dir)
-			if name == "launch" {
-				continue
-			}
-			exists := true
-			if _, err := os.Stat(dir); err != nil {
-				if os.IsNotExist(err) {
-					exists = false
-				} else {
-					return "", err
-				}
-			}
-			dir, err = filepath.Rel(launchDir, dir)
-			if err != nil {
-				return "", err
-			}
-			if exists {
+		for _, tomlFile := range launchData.Files[buildpack.ID] {
+			name := strings.TrimSuffix(tomlFile, ".toml")
+			dir := buildpack.ID + "/" + name
+			if launchData.Dirs[dir] {
 				fmt.Println("    add dir:", dir)
 				image, topLayer, err = mvDir(image, dir)
 				if err != nil {
@@ -125,14 +104,9 @@ func (b *BuildFlags) dockerBuildExport(group *lifecycle.BuildpackGroup, launchVo
 					return "", err
 				}
 			}
-
-			var data interface{}
-			if _, err := toml.DecodeFile(tomlFile, &data); err != nil {
-				return "", err
-			}
 			layers[name] = packs.LayerMetadata{
 				SHA:  topLayer,
-				Data: data,
+				Data: launchData.Data[buildpack.ID+"/"+tomlFile],
 			}
 		}
 		metadata.Buildpacks = append(metadata.Buildpacks, packs.BuildpackMetadata{

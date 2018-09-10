@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -19,6 +21,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockercli "github.com/docker/docker/client"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 )
 
 func Build(appDir, buildImage, runImage, repoName string, publish bool) (err error) {
@@ -59,7 +62,7 @@ func (b *BuildFlags) Run() error {
 	defer b.Cli.VolumeRemove(context.Background(), launchVolume, true)
 	defer b.Cli.VolumeRemove(context.Background(), workspaceVolume, true)
 
-	// fmt.Println("*** COPY APP TO VOLUME:")
+	fmt.Println("*** COPY APP TO VOLUME:")
 	if err := copyToVolume(b.BuildImage, launchVolume, b.AppDir, "app"); err != nil {
 		return err
 	}
@@ -114,7 +117,7 @@ func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) (*lifecyc
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	if err := b.runContainer(ctx, ctr.ID, os.Stdout); err != nil {
+	if err := b.runContainer(ctx, ctr.ID, os.Stdout, os.Stderr); err != nil {
 		return nil, err
 	}
 
@@ -183,7 +186,7 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 		return err
 	}
 
-	return b.runContainer(ctx, ctr.ID, os.Stdout)
+	return b.runContainer(ctx, ctr.ID, os.Stdout, os.Stderr)
 }
 
 func (b *BuildFlags) Build(uid, launchVolume, workspaceVolume, cacheVolume string) error {
@@ -203,7 +206,7 @@ func (b *BuildFlags) Build(uid, launchVolume, workspaceVolume, cacheVolume strin
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	return b.runContainer(ctx, ctr.ID, os.Stdout)
+	return b.runContainer(ctx, ctr.ID, os.Stdout, os.Stderr)
 }
 
 func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
@@ -234,7 +237,7 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 		}
 		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-		return b.runContainer(ctx, ctr.ID, os.Stdout)
+		return b.runContainer(ctx, ctr.ID, os.Stdout, os.Stderr)
 	}
 
 	fullStart := time.Now()
@@ -243,13 +246,9 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 	if err != nil {
 		return err
 	}
-	// TODO uncomment
-	// defer cleanup()
-	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
-	start = time.Now()
-
 	fmt.Println(launchData)
-	panic("hi")
+	fmt.Printf("    extract launch data to host: %s\n", time.Since(start))
+	start = time.Now()
 
 	// _, err = dockerBuildExport(group, localLaunchDir, b.RepoName, b.RunImage)
 	_, err = b.dockerBuildExport(group, launchVolume, launchData, b.RepoName, b.RunImage)
@@ -260,7 +259,13 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 	return nil
 }
 
-func (b *BuildFlags) launchData(image, launchVolume string) (string, error) {
+type LaunchData struct {
+	Dirs  map[string]bool        `json:"dirs"`
+	Files map[string][]string    `json:"files"`
+	Data  map[string]interface{} `json:"data"`
+}
+
+func (b *BuildFlags) launchData(image, launchVolume string) (LaunchData, error) {
 	fmt.Println("DG: b.launchData: 1")
 	script := `
 set -eo pipefail
@@ -281,9 +286,9 @@ for dir in $DIRS; do
 done
 echo $JSON
 `
-	tr, err := singleFileTar("/tmp/launchdata.sh", script)
+	tr, err := singleFileTar("launchdata.sh", script)
 	if err != nil {
-		return "", err
+		return LaunchData{}, err
 	}
 
 	ctx := context.Background()
@@ -299,16 +304,29 @@ echo $JSON
 		},
 	}, nil, "dgodd")
 	if err != nil {
-		return "", err
+		return LaunchData{}, errors.Wrap(err, "launchData: create container")
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	var buf bytes.Buffer
-	if err := b.runContainer(ctx, ctr.ID, &buf); err != nil {
-		return "", err
+	if err := b.Cli.CopyToContainer(ctx, ctr.ID, "/tmp", tr, dockertypes.CopyToContainerOptions{}); err != nil {
+		return LaunchData{}, errors.Wrap(err, "launchData: copy to container")
 	}
 
-	return buf.String(), nil
+	var buf, buferr bytes.Buffer
+	if err := b.runContainer(ctx, ctr.ID, &buf, &buferr); err != nil {
+		fmt.Println("RUN CONTAINER OUT:", buf.String())
+		return LaunchData{}, errors.Wrap(err, "launchData: run container")
+	}
+
+	var data LaunchData
+	bufString := strings.TrimSpace(buf.String())
+	if err := json.Unmarshal([]byte(bufString), &data); err != nil {
+		fmt.Printf("DATA: |%s|\n", bufString)
+		fmt.Printf("STDERR: |%s|\n", buferr.String())
+		return LaunchData{}, errors.Wrap(err, "launchData: parsing json")
+	}
+
+	return data, nil
 }
 
 func copyToVolume(image, volName, srcDir, destDir string) error {
@@ -348,12 +366,22 @@ func (b *BuildFlags) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) 
 	return &group, nil
 }
 
-func (b *BuildFlags) runContainer(ctx context.Context, id string, w io.Writer) error {
+func (b *BuildFlags) runContainer(ctx context.Context, id string, stdout io.Writer, stderr io.Writer) error {
 	if err := b.Cli.ContainerStart(ctx, id, dockertypes.ContainerStartOptions{}); err != nil {
 		return err
 	}
-	out, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
+	stdout2, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
 		ShowStdout: true,
+		Follow:     true,
+	})
+	if err != nil {
+		return err
+	}
+	go func() {
+		stdout2.Read(make([]byte, 8))
+		io.Copy(stdout, stdout2)
+	}()
+	stderr2, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
 		ShowStderr: true,
 		Follow:     true,
 	})
@@ -361,8 +389,10 @@ func (b *BuildFlags) runContainer(ctx context.Context, id string, w io.Writer) e
 		return err
 	}
 	go func() {
-		io.Copy(w, out)
+		stderr2.Read(make([]byte, 8))
+		io.Copy(stderr, stderr2)
 	}()
+
 	waitC, errC := b.Cli.ContainerWait(ctx, id, "")
 	select {
 	case w := <-waitC:

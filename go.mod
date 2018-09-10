@@ -10,6 +10,7 @@ require (
 	github.com/google/go-containerregistry v0.0.0-20180731221751-697ee0b3d46e
 	github.com/google/uuid v0.0.0-20171129191014-dec09d789f3d
 	github.com/moby/moby v0.0.0-20180531152204-71cd53e4a197
+	github.com/pkg/errors v0.8.0
 	github.com/sclevine/spec v0.0.0-20180404042546-a925ac4bfbc9
 	github.com/spf13/cobra v0.0.3
 	github.com/spf13/pflag v1.0.2 // indirect
