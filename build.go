@@ -2,6 +2,7 @@ package pack
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"fmt"
@@ -113,7 +114,7 @@ func (b *BuildFlags) Detect(uid, launchVolume, workspaceVolume string) (*lifecyc
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	if err := b.runContainer(ctx, ctr.ID); err != nil {
+	if err := b.runContainer(ctx, ctr.ID, os.Stdout); err != nil {
 		return nil, err
 	}
 
@@ -182,7 +183,7 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 		return err
 	}
 
-	return b.runContainer(ctx, ctr.ID)
+	return b.runContainer(ctx, ctr.ID, os.Stdout)
 }
 
 func (b *BuildFlags) Build(uid, launchVolume, workspaceVolume, cacheVolume string) error {
@@ -202,7 +203,7 @@ func (b *BuildFlags) Build(uid, launchVolume, workspaceVolume, cacheVolume strin
 	}
 	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-	return b.runContainer(ctx, ctr.ID)
+	return b.runContainer(ctx, ctr.ID, os.Stdout)
 }
 
 func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchVolume, workspaceVolume, cacheVolume string) error {
@@ -233,12 +234,12 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 		}
 		defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
 
-		return b.runContainer(ctx, ctr.ID)
+		return b.runContainer(ctx, ctr.ID, os.Stdout)
 	}
 
 	fullStart := time.Now()
 	start := time.Now()
-	localLaunchDir, _, err := exportVolume(b.BuildImage, launchVolume)
+	launchData, err := b.launchData(b.BuildImage, launchVolume)
 	if err != nil {
 		return err
 	}
@@ -247,8 +248,11 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 	fmt.Printf("    copy '/launch' to host: %s\n", time.Since(start))
 	start = time.Now()
 
+	fmt.Println(launchData)
+	panic("hi")
+
 	// _, err = dockerBuildExport(group, localLaunchDir, b.RepoName, b.RunImage)
-	_, err = b.dockerBuildExport(group, launchVolume, localLaunchDir, b.RepoName, b.RunImage)
+	_, err = b.dockerBuildExport(group, launchVolume, launchData, b.RepoName, b.RunImage)
 	if err != nil {
 		return err
 	}
@@ -256,27 +260,55 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 	return nil
 }
 
-func exportVolume(image, volName string) (string, func(), error) {
-	tmpDir, err := ioutil.TempDir("", "pack.build.")
+func (b *BuildFlags) launchData(image, launchVolume string) (string, error) {
+	fmt.Println("DG: b.launchData: 1")
+	script := `
+set -eo pipefail
+JSON='{}'
+for dir in $DIRS; do
+  for file in $(ls "$dir"); do
+    if [[ -d "$dir/$file" ]]; then
+      JSON=$(echo $JSON | jq --argjson file "\"$dir/$file\"" '.dirs[$file] = true')
+    fi
+  done
+  for file in $(ls "$dir"/*.toml); do
+    if [[ $(basename $file) != "launch.toml" ]]; then
+      data=$(yj -t < "$file")
+      JSON=$(echo $JSON | jq --argjson dir "\"$dir\"" --argjson file "\"$(basename $file)\"" '.files[$dir] += [$file]')
+      JSON=$(echo $JSON | jq --argjson file "\"$file\"" --argjson data "$data" '.data[$file] = $data')
+    fi
+  done
+done
+echo $JSON
+`
+	tr, err := singleFileTar("/tmp/launchdata.sh", script)
 	if err != nil {
-		return "", func() {}, err
-	}
-	cleanup := func() { os.RemoveAll(tmpDir) }
-
-	containerName := uuid.New().String()
-	if output, err := exec.Command("docker", "container", "create", "--name", containerName, "-v", volName+":/launch:ro", image).CombinedOutput(); err != nil {
-		cleanup()
-		fmt.Println(string(output))
-		return "", func() {}, err
-	}
-	defer exec.Command("docker", "rm", containerName).Run()
-	if output, err := exec.Command("docker", "cp", containerName+":/launch/.", tmpDir).CombinedOutput(); err != nil {
-		cleanup()
-		fmt.Println(string(output))
-		return "", func() {}, err
+		return "", err
 	}
 
-	return tmpDir, cleanup, nil
+	ctx := context.Background()
+	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
+		Image:      image,
+		Entrypoint: []string{},
+		Cmd:        []string{"bash", "/tmp/launchdata.sh"},
+		Env:        []string{"DIRS=sh.packs.samples.buildpack.nodejs"}, // FIXME get from group.Buildpacks
+		WorkingDir: "/launch",
+	}, &container.HostConfig{
+		Binds: []string{
+			launchVolume + ":/launch",
+		},
+	}, nil, "dgodd")
+	if err != nil {
+		return "", err
+	}
+	defer b.Cli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{Force: true})
+
+	var buf bytes.Buffer
+	if err := b.runContainer(ctx, ctr.ID, &buf); err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
 }
 
 func copyToVolume(image, volName, srcDir, destDir string) error {
@@ -316,7 +348,7 @@ func (b *BuildFlags) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) 
 	return &group, nil
 }
 
-func (b *BuildFlags) runContainer(ctx context.Context, id string) error {
+func (b *BuildFlags) runContainer(ctx context.Context, id string, w io.Writer) error {
 	if err := b.Cli.ContainerStart(ctx, id, dockertypes.ContainerStartOptions{}); err != nil {
 		return err
 	}
@@ -329,7 +361,7 @@ func (b *BuildFlags) runContainer(ctx context.Context, id string) error {
 		return err
 	}
 	go func() {
-		io.Copy(os.Stdout, out)
+		io.Copy(w, out)
 	}()
 	waitC, errC := b.Cli.ContainerWait(ctx, id, "")
 	select {
