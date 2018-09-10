@@ -22,4 +22,4 @@ deploy:
   local-dir: ./artifacts/
   on:
     repo: buildpack/pack
-    branch: master
+    branch: version-artifacts
