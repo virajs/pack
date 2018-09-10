@@ -164,7 +164,6 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 		cfg.StdinOnce = true
 	}
 
-	fmt.Println("    pull image")
 	rc, err := b.Cli.ImagePull(ctx, cfg.Image, dockertypes.ImagePullOptions{})
 	if err != nil {
 		return err
@@ -172,7 +171,6 @@ func (b *BuildFlags) Analyze(uid, launchVolume, workspaceVolume string) (err err
 	io.Copy(ioutil.Discard, rc)
 	rc.Close()
 
-	fmt.Println("    create container")
 	ctr, err := b.Cli.ContainerCreate(ctx, cfg, hcfg, nil, "pack-analyze-"+uid)
 	if err != nil {
 		return err
@@ -247,7 +245,6 @@ func (b *BuildFlags) Export(uid string, group *lifecycle.BuildpackGroup, launchV
 	if err != nil {
 		return err
 	}
-	fmt.Println(launchData)
 	fmt.Printf("    extract launch data to host: %s\n", time.Since(start))
 	start = time.Now()
 
@@ -267,7 +264,6 @@ type LaunchData struct {
 }
 
 func (b *BuildFlags) launchData(image, launchVolume string) (LaunchData, error) {
-	fmt.Println("DG: b.launchData: 1")
 	script := `
 set -eo pipefail
 JSON='{}'
@@ -303,7 +299,7 @@ echo $JSON
 		Binds: []string{
 			launchVolume + ":/launch",
 		},
-	}, nil, "dgodd")
+	}, nil, "")
 	if err != nil {
 		return LaunchData{}, errors.Wrap(err, "launchData: create container")
 	}
