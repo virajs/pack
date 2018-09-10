@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -378,8 +379,13 @@ func (b *BuildFlags) runContainer(ctx context.Context, id string, stdout io.Writ
 		return err
 	}
 	go func() {
-		stdout2.Read(make([]byte, 8))
-		io.Copy(stdout, stdout2)
+		for {
+			header := make([]byte, 8)
+			stdout2.Read(header)
+			if _, err := io.CopyN(stdout, stdout2, int64(binary.BigEndian.Uint32(header[4:]))); err != nil {
+				break
+			}
+		}
 	}()
 	stderr2, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
 		ShowStderr: true,
@@ -389,8 +395,13 @@ func (b *BuildFlags) runContainer(ctx context.Context, id string, stdout io.Writ
 		return err
 	}
 	go func() {
-		stderr2.Read(make([]byte, 8))
-		io.Copy(stderr, stderr2)
+		for {
+			header := make([]byte, 8)
+			stderr2.Read(header)
+			if _, err := io.CopyN(stderr, stderr2, int64(binary.BigEndian.Uint32(header[4:]))); err != nil {
+				break
+			}
+		}
 	}()
 
 	waitC, errC := b.Cli.ContainerWait(ctx, id, "")
