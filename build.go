@@ -2,6 +2,7 @@ package pack
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/binary"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -265,6 +267,7 @@ type LaunchData struct {
 }
 
 func (b *BuildFlags) launchData(image, launchVolume string) (LaunchData, error) {
+	fmt.Println("DG: b.launchData: 1")
 	script := `
 set -eo pipefail
 JSON='{}'
@@ -310,28 +313,17 @@ echo $JSON
 		return LaunchData{}, errors.Wrap(err, "launchData: copy to container")
 	}
 
-	if err := b.Cli.ContainerStart(ctx, ctr.ID, dockertypes.ContainerStartOptions{}); err != nil {
-		return LaunchData{}, errors.Wrap(err, "launchData: start container")
-	}
-	if err := b.containerWait(ctx, ctr.ID); err != nil {
-		return LaunchData{}, errors.Wrap(err, "launchData: wait container")
-	}
-	stdoutStream, err := b.Cli.ContainerLogs(ctx, ctr.ID, dockertypes.ContainerLogsOptions{
-		ShowStdout: true,
-	})
-	if err != nil {
-		return LaunchData{}, errors.Wrap(err, "launchData: get stdout")
-	}
-	stdout, err := ioutil.ReadAll(stdoutStream)
-	if err != nil {
-		return LaunchData{}, errors.Wrap(err, "launchData: get stdout")
+	var buf, buferr bytes.Buffer
+	if err := b.runContainer(ctx, ctr.ID, &buf, &buferr); err != nil {
+		fmt.Println("RUN CONTAINER OUT:", buf.String())
+		return LaunchData{}, errors.Wrap(err, "launchData: run container")
 	}
 
 	var data LaunchData
-	if err := json.Unmarshal(stdout[8:], &data); err != nil {
-		if stderr, err := b.Cli.ContainerLogs(ctx, ctr.ID, dockertypes.ContainerLogsOptions{ShowStderr: true}); err == nil {
-			fmt.Printf("STDERR: |%s|\n", stderr)
-		}
+	bufString := strings.TrimSpace(buf.String())
+	if err := json.Unmarshal([]byte(bufString), &data); err != nil {
+		fmt.Printf("DATA: |%s|\n", bufString)
+		fmt.Printf("STDERR: |%s|\n", buferr.String())
 		return LaunchData{}, errors.Wrap(err, "launchData: parsing json")
 	}
 
@@ -375,24 +367,10 @@ func (b *BuildFlags) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) 
 	return &group, nil
 }
 
-func (b *BuildFlags) containerWait(ctx context.Context, id string) error {
-	waitC, errC := b.Cli.ContainerWait(ctx, id, "")
-	select {
-	case w := <-waitC:
-		if w.StatusCode != 0 {
-			return fmt.Errorf("container run: non zero exit: %d: %s", w.StatusCode, w.Error)
-		}
-		return nil
-	case err := <-errC:
-		return err
-	}
-}
-
 func (b *BuildFlags) runContainer(ctx context.Context, id string, stdout io.Writer, stderr io.Writer) error {
 	if err := b.Cli.ContainerStart(ctx, id, dockertypes.ContainerStartOptions{}); err != nil {
 		return err
 	}
-
 	stdout2, err := b.Cli.ContainerLogs(ctx, id, dockertypes.ContainerLogsOptions{
 		ShowStdout: true,
 		Follow:     true,
@@ -426,5 +404,14 @@ func (b *BuildFlags) runContainer(ctx context.Context, id string, stdout io.Writ
 		}
 	}()
 
-	return b.containerWait(ctx, id)
+	waitC, errC := b.Cli.ContainerWait(ctx, id, "")
+	select {
+	case w := <-waitC:
+		if w.StatusCode != 0 {
+			return fmt.Errorf("container run: non zero exit: %d: %s", w.StatusCode, w.Error)
+		}
+		return nil
+	case err := <-errC:
+		return err
+	}
 }
