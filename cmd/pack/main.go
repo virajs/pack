@@ -12,7 +12,7 @@ func main() {
 
 	var buildFlags pack.BuildFlags
 	buildCommand := &cobra.Command{
-		Use:  "build [IMAGE NAME]",
+		Use:  "build <image-name>",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			buildFlags.RepoName = args[0]
@@ -24,23 +24,21 @@ func main() {
 	buildCommand.Flags().StringVar(&buildFlags.RunImage, "run-image", "packs/run", "run image")
 	buildCommand.Flags().BoolVar(&buildFlags.Publish, "publish", false, "publish to registry")
 
-	var createFlags pack.Create
-	createCommand := &cobra.Command{
-		Use:  "create [DETECT IMAGE NAME] [BUILD IMAGE NAME]",
-		Args: cobra.MinimumNArgs(2),
+	var createBuilderFlags pack.CreateBuilderFlags
+	createBuilderCommand := &cobra.Command{
+		Use:  "create-builder <image-name> -b <path-to-builder-toml>",
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			createFlags.DetectImage = args[0]
-			createFlags.BuildImage = args[1]
-			return createFlags.Run()
+			createBuilderFlags.RepoName = args[0]
+			return createBuilderFlags.Run()
 		},
 	}
-	createCommand.Flags().StringVarP(&createFlags.BPDir, "path", "p", wd, "path to dir with buildpacks and order.toml")
-	createCommand.Flags().StringVar(&createFlags.BaseImage, "from-base-image", "packs/v3:latest", "from base image")
-	createCommand.Flags().BoolVar(&createFlags.Publish, "publish", false, "publish to registry")
+	createBuilderCommand.Flags().StringVarP(&createBuilderFlags.RepoName, "path", "p", wd, "path to app dir")
+	createBuilderCommand.Flags().StringVarP(&createBuilderFlags.BuilderTomlPath, "builder-config", "b", wd, "path to builder.toml file")
 
 	rootCmd := &cobra.Command{Use: "pack"}
 	rootCmd.AddCommand(buildCommand)
-	rootCmd.AddCommand(createCommand)
+	rootCmd.AddCommand(createBuilderCommand)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
