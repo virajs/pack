@@ -4,12 +4,16 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"fmt"
+	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/lifecycle/img"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
+
 )
 
 type CreateBuilderFlags struct {
@@ -18,13 +22,13 @@ type CreateBuilderFlags struct {
 }
 
 type Buildpack struct {
-     ID string
-     URI string
+	ID  string
+	URI string
 }
 
 type Builder struct {
-	Buildpacks []Buildpack
-	Order lifecycle.BuildpackOrder
+	Buildpacks []Buildpack                `toml:"buildpacks"`
+	Groups     []lifecycle.BuildpackGroup `toml:"groups"`
 }
 
 type BuilderFactory struct {
@@ -48,7 +52,13 @@ func (f *BuilderFactory) Create(flags CreateBuilderFlags) error {
 	}
 	defer os.Remove(tmpDir)
 
-	buildpackDir, err := f.buildpackDir(tmpDir)
+	builder := Builder{}
+	_, err = toml.DecodeFile(flags.BuilderTomlPath, &builder)
+	if err != nil {
+		return err
+	}
+
+	buildpackDir, err := f.buildpackDir(tmpDir, &builder)
 	if err != nil {
 		return err
 	}
@@ -60,11 +70,14 @@ func (f *BuilderFactory) Create(flags CreateBuilderFlags) error {
 		return err
 	}
 
-
-	return  builderStore.Write(builderImage)
+	return builderStore.Write(builderImage)
 }
 
-func (f * BuilderFactory) buildpackDir(dest string) (string, error){
+type order struct {
+	Groups []lifecycle.BuildpackGroup `toml:"groups"`
+}
+
+func (f *BuilderFactory) buildpackDir(dest string, builder *Builder) (string, error) {
 	buildpackDir := filepath.Join(dest, "buildpack")
 	err := os.Mkdir(buildpackDir, 0755)
 	if err != nil {
@@ -74,12 +87,68 @@ func (f * BuilderFactory) buildpackDir(dest string) (string, error){
 	if err != nil {
 		return "", err
 	}
-	if err := orderFile.Close(); err != nil {
+	defer orderFile.Close()
+	log.Printf("BUILDPACKS: %+v", builder.Buildpacks)
+	for _, buildpack := range builder.Buildpacks {
+		log.Println("BEFORE: ", buildpack.URI)
+		dir := strings.TrimPrefix(buildpack.URI, "file://")
+		log.Println("AFTER: ", dir)
+		err := recursiveCopy(dir, filepath.Join(buildpackDir, buildpack.ID))
+		if err != nil {
+			return "", err
+		}
+	}
+
+	err = toml.NewEncoder(orderFile).Encode(order{ Groups: builder.Groups })
+	if err != nil {
 		return "", err
 	}
+
 	return buildpackDir, nil
 }
 
+func recursiveCopy(src, dest string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		destFile := filepath.Join(dest, relPath)
+		if info.IsDir(){
+			err := os.Mkdir(destFile, info.Mode())
+			if err != nil {
+				return err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				os.Symlink(destFile, target)
+			}
+			if info.Mode().IsRegular() {
+				s, err := os.Open(path)
+				if err != nil {
+					return err
+				}
+				defer s.Close()
+
+				d, err := os.Open(destFile)
+				if err != nil {
+					return err
+				}
+				defer d.Close()
+				if _, err := io.Copy(s, d); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
 
 // TODO share between here and exporter.
 func createTarFile(tarFile, fsDir, tarDir string) error {

@@ -1,9 +1,6 @@
 [[buildpacks]]
 id = "com.example.buildpacks.nodejs"
-uri = "file:///local/nodejs-buildpack.tgz"
+uri = "file://fixtures/buildpacks/sample_bp"
 
 [[groups]]
-build-image = "some-build-image"
-run-image = "some-run-image"
 buildpacks = [{ id = "sample_bp", version = "latest" }]
-

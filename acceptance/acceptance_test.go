@@ -187,8 +187,6 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			assertNil(t, err)
 			assertNil(t, os.Mkdir(filepath.Join(tmpDir, "app"), 0755))
 			run(t, exec.Command("cp", "-r", "fixtures/node_app/.", filepath.Join(tmpDir, "app")))
-			assertNil(t, os.Mkdir(filepath.Join(tmpDir, "buildpacks"), 0755))
-			run(t, exec.Command("cp", "-r", "fixtures/buildpacks/.", filepath.Join(tmpDir, "buildpacks")))
 
 			repoName = "some-org/" + randString(10)
 			containerName = "test-" + randString(10)
@@ -209,6 +207,16 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				t.Fatalf("create-builder command failed: %s: %s", output, err)
 			}
 
+			t.Log("builder image has order toml and buildpacks")
+			dockerRunOutput := run(t, exec.Command("docker", "run", "--rm=true", "-t", repoName, "ls", "/buildpacks/order.toml"))
+
+			if !strings.Contains(dockerRunOutput, "order.toml") {
+				t.Fatalf("expected /buildpacks to contain order.toml, got '%s'", dockerRunOutput)
+			}
+			if !strings.Contains(dockerRunOutput, "com.example.buildpacks.nodejs") {
+				t.Fatalf("expected /buildpacks to contain com.example.buildpacks.nodejs, got '%s'", dockerRunOutput)
+			}
+
 			t.Log("builder image has order toml")
 			for _, image := range []string{repoName} {
 				info := docker.FileFromImage(t, image, "/buildpacks/order.toml")
@@ -216,14 +224,17 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 					t.Fatalf("Expected %s to contain /buildpacks/order.toml: %v", image, info)
 				}
 			}
-			dockerRunOutput := run(t, exec.Command("docker", "run", "--rm=true", "-t", "packs/build", "cat", "/buildpacks/order.toml"))
-			expectedOrderToml :=`[[groups]]
-build-image = "some-build-image"
-run-image = "some-run-image"
-buildpacks = [{ id = "sample_bp", version = "latest" }]`
+			dockerRunOutput = run(t, exec.Command("docker", "run", "--rm=true", "-t", repoName, "cat", "/buildpacks/order.toml"))
+			sanitzedOutput := strings.Replace(dockerRunOutput, "\r", "", -1)
+			expectedGroups := `[[groups]]
 
-			if string(dockerRunOutput) != expectedOrderToml {
-				t.Fatalf("expected order.toml to contain %s, got %s", expectedOrderToml, string(dockerRunOutput))
+  [[groups.buildpacks]]
+    id = "sample_bp"
+    version = "latest"
+`
+
+			if diff := cmp.Diff(sanitzedOutput, expectedGroups); diff != "" {
+				t.Fatalf("expected order.toml to contain '%s', got diff '%s'", expectedGroups, diff)
 			}
 
 			//t.Log("build app with builder")
