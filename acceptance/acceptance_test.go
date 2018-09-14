@@ -174,43 +174,68 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 	when("create-builder", func(){
 		var (
 			builderTOML string
-			tmpDir string
 			repoName string
 			containerName string
+			tmpDir string
 		)
 
 		it.Before(func(){
+			builderTOML = filepath.Join("fixtures", "buildpacks", "builder.toml")
+
 			var err error
-			tmpDir, err = ioutil.TempDir("", "create-builder-test")
-			if err != nil {
-				t.Fatalf("Failed to create temp dir: %s", err)
-			}
-			builderTOML = filepath.Join(tmpDir, "builder.toml")
+			tmpDir, err = ioutil.TempDir("", "pack.build.node_app.")
+			assertNil(t, err)
+			assertNil(t, os.Mkdir(filepath.Join(tmpDir, "app"), 0755))
+			run(t, exec.Command("cp", "-r", "fixtures/node_app/.", filepath.Join(tmpDir, "app")))
+			assertNil(t, os.Mkdir(filepath.Join(tmpDir, "buildpacks"), 0755))
+			run(t, exec.Command("cp", "-r", "fixtures/buildpacks/.", filepath.Join(tmpDir, "buildpacks")))
 
 			repoName = "some-org/" + randString(10)
 			containerName = "test-" + randString(10)
 		})
 		it.After(func() {
-			err := os.RemoveAll(tmpDir)
-			if err != nil {
-				t.Fatalf("Failed to remove temp dir: %s", err)
-			}
 			docker.Kill(containerName)
 			docker.RemoveImage(repoName)
+			if tmpDir != "" {
+				os.RemoveAll(tmpDir)
+			}
 		})
 
 		it.Focus("creates a builder image", func(){
-			toml, err := os.Create(builderTOML)
-			if err != nil {
-				t.Fatalf("Failed to open builder.toml: %s", err)
-			}
-			toml.Close()
+			t.Log("create builder image")
 			cmd := exec.Command(pack, "create-builder", repoName, "-b", builderTOML)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("create-builder command failed: %s: %s", output, err)
 			}
-			run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", repoName))
+
+			t.Log("builder image has order toml")
+			for _, image := range []string{repoName} {
+				info := docker.FileFromImage(t, image, "/buildpacks/order.toml")
+				if info.Name != "order.toml" {
+					t.Fatalf("Expected %s to contain /buildpacks/order.toml: %v", image, info)
+				}
+			}
+			dockerRunOutput := run(t, exec.Command("docker", "run", "--rm=true", "-t", "packs/build", "cat", "/buildpacks/order.toml"))
+			expectedOrderToml :=`[[groups]]
+build-image = "some-build-image"
+run-image = "some-run-image"
+buildpacks = [{ id = "sample_bp", version = "latest" }]`
+
+			if string(dockerRunOutput) != expectedOrderToml {
+				t.Fatalf("expected order.toml to contain %s, got %s", expectedOrderToml, string(dockerRunOutput))
+			}
+
+			//t.Log("build app with builder")
+			//docker.Pull(t, repoName, "latest")
+			//docker.Pull(t, repoName, "latest")
+			//cmd = exec.Command(pack, "build", repoName, "-p", filepath.Join(tmpDir, "app"), "--detect-image", repoName, "--publish")
+			//cmd.Env = append(os.Environ(), "HOME="+homeDir)
+			//run(t, cmd)
+
+			//t.Log("run image:", repoName)
+			//docker.Pull(t, repoName, "latest")
+			//run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", repoName))
 		})
 	}, spec.Parallel(), spec.Report(report.Terminal{}))
 }

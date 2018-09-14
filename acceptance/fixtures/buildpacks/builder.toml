@@ -1,3 +1,7 @@
+[[buildpacks]]
+id = "com.example.buildpacks.nodejs"
+uri = "file:///local/nodejs-buildpack.tgz"
+
 [[groups]]
 build-image = "some-build-image"
 run-image = "some-run-image"
