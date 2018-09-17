@@ -1,4 +1,4 @@
-package acceptance_test
+package acceptance
 
 import (
 	"encoding/json"
@@ -112,19 +112,21 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		when("'--publish' flag is not specified'", func() {
-			it("builds and exports an image", func() {
+			it.Focus("builds and exports an image", func() {
 				cmd := exec.Command(pack, "build", repoName, "-p", sourceCodePath)
 				cmd.Env = append(os.Environ(), "HOME="+homeDir)
 				run(t, cmd)
 
 				run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", repoName))
-				launchPort := fetchHostPort(t, containerName)
+				//launchPort := fetchHostPort(t, containerName)
 
 				time.Sleep(2 * time.Second)
-				assertEq(t, fetch(t, "http://localhost:"+launchPort), "Buildpacks Worked!")
+
+				host := strings.TrimRight(docker.host, "1234567890")
+				assertEq(t, fetch(t, "https://"+host+"8080"), "Buildpacks Worked!")
 
 				t.Log("Checking that registry is empty")
-				contents := fetch(t, fmt.Sprintf("http://localhost:%s/v2/_catalog", registryPort))
+				contents := fetch(t, docker.url("/v2/_catalog", map[string]string{}))
 				if strings.Contains(string(contents), repo) {
 					t.Fatalf("Should not have published image without the '--publish' flag: got %s", contents)
 				}
@@ -147,7 +149,8 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				}
 
 				t.Log("Checking that registry has contents")
-				contents := fetch(t, fmt.Sprintf("http://localhost:%s/v2/_catalog", registryPort))
+
+				contents := fetch(t, docker.url("/v2/_catalog", map[string]string{}))
 				if !strings.Contains(string(contents), repo) {
 					t.Fatalf("Expected to see image %s in %s", repo, contents)
 				}
@@ -155,10 +158,9 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				t.Log("run image:", repoName)
 				docker.Pull(t, repoName, imgSHA)
 				run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", fmt.Sprintf("%s@%s", repoName, imgSHA)))
-				launchPort := fetchHostPort(t, containerName)
 
 				time.Sleep(2 * time.Second)
-				assertEq(t, fetch(t, "http://localhost:"+launchPort), "Buildpacks Worked!")
+				assertEq(t, fetch(t, docker.url("/", map[string]string{})), "Buildpacks Worked!")
 
 				t.Log("uses the cache on subsequent run")
 				output = runPackBuild()

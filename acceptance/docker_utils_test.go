@@ -1,8 +1,10 @@
-package acceptance_test
+package acceptance
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,25 +14,45 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
 type DockerDaemon struct {
 	client *http.Client
 	url    func(path string, query map[string]string) string
+	host   string
 }
 
 func NewDockerDaemon() *DockerDaemon {
-	return &DockerDaemon{
-		client: &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", "/var/run/docker.sock")
-				},
+	var transport *http.Transport
+	var scheme string
+	dockerHost, found := os.LookupEnv("DOCKER_HOST")
+	dockerHost = strings.TrimPrefix(dockerHost, "tcp://")
+	if found {
+		scheme = "https"
+		transport = &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("tcp", dockerHost)
 			},
-		},
+			TLSClientConfig: certsJiggeryPokery(),
+		}
+	} else {
+		dockerHost = "unix"
+		scheme = "http"
+		transport = &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", "/var/run/docker.sock")
+			},
+		}
+	}
+
+	return &DockerDaemon{
+		client: &http.Client{Transport: transport},
 		url: func(path string, query map[string]string) string {
-			u := url.URL{Scheme: "http", Host: "unix", Path: path}
+			u := url.URL{Scheme: scheme, Host: dockerHost, Path: path}
 			q := u.Query()
 			for k, v := range query {
 				q.Set(k, v)
@@ -38,6 +60,29 @@ func NewDockerDaemon() *DockerDaemon {
 			u.RawQuery = q.Encode()
 			return u.String()
 		},
+		host: dockerHost,
+	}
+}
+
+func certsJiggeryPokery() *tls.Config {
+	dockerCertDir := os.Getenv("DOCKER_CERT_PATH")
+	roots := x509.NewCertPool()
+
+	pemData, err := ioutil.ReadFile(filepath.Join(dockerCertDir, "ca.pem"))
+	if err != nil {
+		panic(err)
+	}
+
+	roots.AppendCertsFromPEM(pemData)
+
+	crt, err := tls.LoadX509KeyPair(filepath.Join(dockerCertDir, "cert.pem"), filepath.Join(dockerCertDir, "key.pem"))
+	if err != nil {
+		panic(err)
+	}
+
+	return &tls.Config{
+		RootCAs:      roots,
+		Certificates: []tls.Certificate{crt},
 	}
 }
 
