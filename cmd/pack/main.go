@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/BurntSushi/toml"
+	"github.com/buildpack/pack/fs"
 	"os"
 
 	"github.com/buildpack/pack"
@@ -39,23 +41,29 @@ func buildCommand() *cobra.Command {
 }
 
 func createBuilderCommand() *cobra.Command {
+	var builderTomlPath string
 	builderFactory := pack.BuilderFactory{
-		DefaultStack: pack.Stack{
-			ID:         "",
-			BuildImage: "packs/build",
-			RunImage:   "packs/run",
-		},
+		FS: &fs.FS{},
 	}
 
-	var createBuilderFlags pack.CreateBuilderFlags
+	var createBuilderArgs pack.CreateBuilderArgs
 	createBuilderCommand := &cobra.Command{
 		Use:  "create-builder <image-name> -b <path-to-builder-toml>",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			createBuilderFlags.RepoName = args[0]
-			return builderFactory.Create(createBuilderFlags)
+			createBuilderArgs.RepoName = args[0]
+			_, err := toml.DecodeFile(builderTomlPath, &createBuilderArgs.Builder)
+			if err != nil {
+				return err
+			}
+			stack, err := pack.DefaultStack()
+			if err != nil {
+				return err
+			}
+			createBuilderArgs.Stack = stack
+			return builderFactory.Create(createBuilderArgs)
 		},
 	}
-	createBuilderCommand.Flags().StringVarP(&createBuilderFlags.BuilderTomlPath, "builder-config", "b", "", "path to builder.toml file")
+	createBuilderCommand.Flags().StringVarP(&builderTomlPath, "builder-config", "b", "", "path to builder.toml file")
 	return createBuilderCommand
 }

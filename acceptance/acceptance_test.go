@@ -1,4 +1,4 @@
-package acceptance_test
+package acceptance
 
 import (
 	"encoding/json"
@@ -201,7 +201,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			}
 		})
 
-		it("creates a builder image", func() {
+		it.Focus("creates a builder image", func() {
 			t.Log("create builder image")
 			cmd := exec.Command(pack, "create-builder", builderRepoName, "-b", builderTOML)
 			output, err := cmd.CombinedOutput()
