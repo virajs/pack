@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/buildpack/pack/image"
 	"io"
 	"io/ioutil"
 	"os"
@@ -24,12 +25,13 @@ import (
 )
 
 func exportRegistry(group *lifecycle.BuildpackGroup, workspaceDir, repoName, stackName string, stdout, stderr io.Writer) (string, error) {
-	origImage, err := readImage(repoName, false)
+	images := &image.Client{}
+	origImage, err := images.ReadImage(repoName, false)
 	if err != nil {
 		return "", err
 	}
 
-	stackImage, err := readImage(stackName, false)
+	stackImage, err := images.ReadImage(stackName, false)
 	if err != nil || stackImage == nil {
 		return "", packs.FailErr(err, "get image for", stackName)
 	}
