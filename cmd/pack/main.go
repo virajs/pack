@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/buildpack/pack/docker"
+	"log"
 	"os"
 
 	"github.com/buildpack/pack/fs"
@@ -33,7 +35,6 @@ func buildCommand() *cobra.Command {
 			if err := buildFlags.Init(); err != nil {
 				return err
 			}
-			defer buildFlags.Close()
 			return buildFlags.Run()
 		},
 	}
@@ -47,15 +48,21 @@ func buildCommand() *cobra.Command {
 
 func createBuilderCommand() *cobra.Command {
 	flags := pack.CreateBuilderFlags{}
-	builderFactory := pack.BuilderFactory{
-		FS: &fs.FS{},
-	}
-
 	createBuilderCommand := &cobra.Command{
 		Use:  "create-builder <image-name> -b <path-to-builder-toml>",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			flags.RepoName = args[0]
+
+			docker, err := docker.New()
+			if err != nil {
+				return err
+			}
+			builderFactory := pack.BuilderFactory{
+				FS: &fs.FS{},
+				Log: log.New(os.Stdout, "", log.LstdFlags),
+				Docker: docker,
+			}
 			builderConfig, err := builderFactory.BuilderConfigFromFlags(flags)
 			if err != nil {
 				return err

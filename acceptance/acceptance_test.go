@@ -120,7 +120,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", repoName))
 				launchPort := fetchHostPort(t, containerName)
 
-				time.Sleep(2 * time.Second)
+				time.Sleep(5 * time.Second)
 				assertEq(t, fetch(t, "http://localhost:"+launchPort), "Buildpacks Worked!")
 
 				t.Log("Checking that registry is empty")

@@ -8,13 +8,16 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/sclevine/spec"
 	"github.com/sclevine/spec/report"
+	"io/ioutil"
+	"log"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
 func TestCreateBuilder(t *testing.T) {
-	spec.Run(t, "create-builder", testCreateBuilder, spec.Parallel(), spec.Report(report.Terminal{}))
+	spec.Run(t, "create-builder", testCreateBuilder, spec.Sequential(), spec.Report(report.Terminal{}))
 }
 
 func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
@@ -29,6 +32,12 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 			mockDocker = mocks.NewMockDocker(mockController)
 			factory = pack.BuilderFactory{
 				Docker: mockDocker,
+				Log:    log.New(ioutil.Discard, "", log.LstdFlags),
+			}
+
+			output, err := exec.Command("docker", "pull", "packs/build").CombinedOutput()
+			if err != nil {
+				t.Fatalf("Failed to pull the base image in test setup: %s: %s", output, err)
 			}
 		})
 
@@ -46,23 +55,13 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 			if err != nil {
 				t.Fatalf("error creating builder config: %s", err)
 			}
-			if config.Repo == nil {
-				t.Fatalf("failed to set repository: %s", err)
-			}
-			if config.BaseImage == nil {
-				t.Fatalf("failed to set base iamge: %s", err)
-			}
+			assertEq(t, reflect.TypeOf(config.BaseImage).String(), "*daemon.image")
+			assertEq(t, reflect.TypeOf(config.Repo).String(), "*img.daemonStore")
 			checkBuildpacks(t, config.Buildpacks)
 			checkGroups(t, config.Groups)
 		})
 
 		when("the daemon has the base image", func() {
-			it.Before(func() {
-				output, err := exec.Command("docker", "pull", "packs/build").CombinedOutput()
-				if err != nil {
-					t.Fatalf("Failed to pull the base image in test setup: %s: %s", output, err)
-				}
-			})
 			it("doesn't pull base a new image when --no-pull flag is provided", func() {
 				config, err := factory.BuilderConfigFromFlags(pack.CreateBuilderFlags{
 					RepoName:        "some/image",
@@ -75,9 +74,8 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 				if config.Repo == nil {
 					t.Fatalf("failed to set repository: %s", err)
 				}
-				if config.BaseImage == nil {
-					t.Fatalf("failed to set base iamge: %s", err)
-				}
+				assertEq(t, reflect.TypeOf(config.BaseImage).String(), "*daemon.image")
+				assertEq(t, reflect.TypeOf(config.Repo).String(), "*img.daemonStore")
 				checkBuildpacks(t, config.Buildpacks)
 				checkGroups(t, config.Groups)
 			})
@@ -109,12 +107,8 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 			if err != nil {
 				t.Fatalf("error creating builder config: %s", err)
 			}
-			if config.Repo == nil {
-				t.Fatalf("failed to set repository: %s", err)
-			}
-			if config.BaseImage == nil {
-				t.Fatalf("failed to set base iamge: %s", err)
-			}
+			assertEq(t, reflect.TypeOf(config.BaseImage).String(), "*remote.mountableImage")
+			assertEq(t, reflect.TypeOf(config.Repo).String(), "*img.registryStore")
 			checkBuildpacks(t, config.Buildpacks)
 			checkGroups(t, config.Groups)
 		})

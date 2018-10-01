@@ -55,6 +55,7 @@ type CreateBuilderFlags struct {
 }
 
 const defaultBuildImage = "packs/build"
+
 func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (BuilderConfig, error) {
 	if !flags.NoPull && !flags.Publish {
 		f.Log.Println("Pulling builder base image ", defaultBuildImage)
