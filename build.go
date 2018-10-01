@@ -51,7 +51,7 @@ type BuildFlags struct {
 	Publish  bool
 	NoPull   bool
 	// Below are set by init
-	Cli             *docker.Docker
+	Cli             *docker.Client
 	WorkspaceVolume string
 	CacheVolume     string
 	Stdout          io.Writer
