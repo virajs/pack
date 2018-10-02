@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -67,4 +68,20 @@ func appendStackIfMissing(config *Config, stack Stack) {
 		}
 	}
 	config.Stacks = append(config.Stacks, stack)
+}
+
+func (c *Config) Get(stackID string) (*Stack, error) {
+	if stackID == "" {
+		stackID = c.DefaultStackID
+	}
+	for _, stack := range c.Stacks {
+		if stack.ID == stackID {
+			return &stack, nil
+		}
+	}
+	return nil, fmt.Errorf(`Missing stack: stack with id "%s" not found in pack config.toml`, stackID)
+}
+
+func (c *Stack) RunImage(repoName string) (string, error) {
+	return "", nil
 }

@@ -5,7 +5,7 @@
 package mocks
 
 import (
-	img "github.com/buildpack/packs/img"
+	img "github.com/buildpack/lifecycle/img"
 	gomock "github.com/golang/mock/gomock"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	reflect "reflect"

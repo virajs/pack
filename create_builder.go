@@ -11,8 +11,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
+	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/pack/config"
-	"github.com/buildpack/packs/img"
 	"github.com/google/go-containerregistry/pkg/v1"
 	"github.com/pkg/errors"
 )
@@ -96,18 +96,14 @@ func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (Build
 }
 
 func (f *BuilderFactory) baseImageName(stackID string) (string, error) {
-	if stackID == "" {
-		stackID = f.Config.DefaultStackID
+	stack, err := f.Config.Get(stackID)
+	if err != nil {
+		return "", err
 	}
-	for _, stack := range f.Config.Stacks {
-		if stack.ID == stackID {
-			if len(stack.BuildImages) < 1 {
-				return "", fmt.Errorf(`Invalid stack: stack "%s" requies at least one build image`, stackID)
-			}
-			return stack.BuildImages[0], nil
-		}
+	if len(stack.BuildImages) < 1 {
+		return "", fmt.Errorf(`Invalid stack: stack "%s" requies at least one build image`, stack.ID)
 	}
-	return "", fmt.Errorf(`Missing stack: stack with id "%s" not found in pack config.toml`, stackID)
+	return stack.BuildImages[0], nil
 }
 
 func (f *BuilderFactory) Create(config BuilderConfig) error {

@@ -31,48 +31,49 @@ func testConfig(t *testing.T, when spec.G, it spec.S) {
 		assertNil(t, err)
 	})
 
-	when("no config on disk", func() {
-		it("writes the defaults to disk", func() {
-			subject, err := config.New(tmpDir)
-			assertNil(t, err)
+	when(".New", func() {
+		when("no config on disk", func() {
+			it("writes the defaults to disk", func() {
+				subject, err := config.New(tmpDir)
+				assertNil(t, err)
 
-			b, err := ioutil.ReadFile(filepath.Join(tmpDir, "config.toml"))
-			assertNil(t, err)
-			assertContains(t, string(b), `default-stack-id = "io.buildpacks.stacks.bionic"`)
-			assertContains(t, string(b), strings.TrimSpace(`
+				b, err := ioutil.ReadFile(filepath.Join(tmpDir, "config.toml"))
+				assertNil(t, err)
+				assertContains(t, string(b), `default-stack-id = "io.buildpacks.stacks.bionic"`)
+				assertContains(t, string(b), strings.TrimSpace(`
 [[stacks]]
   id = "io.buildpacks.stacks.bionic"
   build-images = ["packs/build"]
   run-images = ["packs/run"]
 `))
 
-			assertEq(t, len(subject.Stacks), 1)
-			assertEq(t, subject.Stacks[0].ID, "io.buildpacks.stacks.bionic")
-			assertEq(t, len(subject.Stacks[0].BuildImages), 1)
-			assertEq(t, subject.Stacks[0].BuildImages[0], "packs/build")
-			assertEq(t, len(subject.Stacks[0].RunImages), 1)
-			assertEq(t, subject.Stacks[0].RunImages[0], "packs/run")
-			assertEq(t, subject.DefaultStackID, "io.buildpacks.stacks.bionic")
-		})
+				assertEq(t, len(subject.Stacks), 1)
+				assertEq(t, subject.Stacks[0].ID, "io.buildpacks.stacks.bionic")
+				assertEq(t, len(subject.Stacks[0].BuildImages), 1)
+				assertEq(t, subject.Stacks[0].BuildImages[0], "packs/build")
+				assertEq(t, len(subject.Stacks[0].RunImages), 1)
+				assertEq(t, subject.Stacks[0].RunImages[0], "packs/run")
+				assertEq(t, subject.DefaultStackID, "io.buildpacks.stacks.bionic")
+			})
 
-		when("path is missing", func() {
-			it("creates the directory", func() {
-				_, err := config.New(filepath.Join(tmpDir, "a", "b"))
-				assertNil(t, err)
+			when("path is missing", func() {
+				it("creates the directory", func() {
+					_, err := config.New(filepath.Join(tmpDir, "a", "b"))
+					assertNil(t, err)
 
-				b, err := ioutil.ReadFile(filepath.Join(tmpDir, "a", "b", "config.toml"))
-				assertNil(t, err)
-				assertContains(t, string(b), `default-stack-id = "io.buildpacks.stacks.bionic"`)
+					b, err := ioutil.ReadFile(filepath.Join(tmpDir, "a", "b", "config.toml"))
+					assertNil(t, err)
+					assertContains(t, string(b), `default-stack-id = "io.buildpacks.stacks.bionic"`)
+				})
 			})
 		})
-	})
 
-	when("config on disk is missing one of the built-in stacks", func() {
-		it.Before(func() {
-			w, err := os.Create(filepath.Join(tmpDir, "config.toml"))
-			assertNil(t, err)
-			defer w.Close()
-			w.Write([]byte(`
+		when("config on disk is missing one of the built-in stacks", func() {
+			it.Before(func() {
+				w, err := os.Create(filepath.Join(tmpDir, "config.toml"))
+				assertNil(t, err)
+				defer w.Close()
+				w.Write([]byte(`
 default-stack-id = "some.user.provided.stack"
 
 [[stacks]]
@@ -80,80 +81,127 @@ default-stack-id = "some.user.provided.stack"
   build-images = ["some/build"]
   run-images = ["some/run"]
 `))
-		})
+			})
 
-		it("add built-in stack while preserving custom stack and custom default-stack-id", func() {
-			subject, err := config.New(tmpDir)
-			assertNil(t, err)
+			it("add built-in stack while preserving custom stack and custom default-stack-id", func() {
+				subject, err := config.New(tmpDir)
+				assertNil(t, err)
 
-			b, err := ioutil.ReadFile(filepath.Join(tmpDir, "config.toml"))
-			assertNil(t, err)
-			assertContains(t, string(b), `default-stack-id = "some.user.provided.stack"`)
-			assertContains(t, string(b), strings.TrimSpace(`
+				b, err := ioutil.ReadFile(filepath.Join(tmpDir, "config.toml"))
+				assertNil(t, err)
+				assertContains(t, string(b), `default-stack-id = "some.user.provided.stack"`)
+				assertContains(t, string(b), strings.TrimSpace(`
 [[stacks]]
   id = "io.buildpacks.stacks.bionic"
   build-images = ["packs/build"]
   run-images = ["packs/run"]
 `))
-			assertContains(t, string(b), strings.TrimSpace(`
+				assertContains(t, string(b), strings.TrimSpace(`
 [[stacks]]
   id = "some.user.provided.stack"
   build-images = ["some/build"]
   run-images = ["some/run"]
 `))
-			assertEq(t, subject.DefaultStackID, "some.user.provided.stack")
+				assertEq(t, subject.DefaultStackID, "some.user.provided.stack")
 
-			assertEq(t, len(subject.Stacks), 2)
-			assertEq(t, subject.Stacks[0].ID, "some.user.provided.stack")
-			assertEq(t, len(subject.Stacks[0].BuildImages), 1)
-			assertEq(t, subject.Stacks[0].BuildImages[0], "some/build")
-			assertEq(t, len(subject.Stacks[0].RunImages), 1)
-			assertEq(t, subject.Stacks[0].RunImages[0], "some/run")
+				assertEq(t, len(subject.Stacks), 2)
+				assertEq(t, subject.Stacks[0].ID, "some.user.provided.stack")
+				assertEq(t, len(subject.Stacks[0].BuildImages), 1)
+				assertEq(t, subject.Stacks[0].BuildImages[0], "some/build")
+				assertEq(t, len(subject.Stacks[0].RunImages), 1)
+				assertEq(t, subject.Stacks[0].RunImages[0], "some/run")
 
-			assertEq(t, subject.Stacks[1].ID, "io.buildpacks.stacks.bionic")
-			assertEq(t, len(subject.Stacks[1].BuildImages), 1)
-			assertEq(t, subject.Stacks[1].BuildImages[0], "packs/build")
-			assertEq(t, len(subject.Stacks[1].RunImages), 1)
-			assertEq(t, subject.Stacks[1].RunImages[0], "packs/run")
+				assertEq(t, subject.Stacks[1].ID, "io.buildpacks.stacks.bionic")
+				assertEq(t, len(subject.Stacks[1].BuildImages), 1)
+				assertEq(t, subject.Stacks[1].BuildImages[0], "packs/build")
+				assertEq(t, len(subject.Stacks[1].RunImages), 1)
+				assertEq(t, subject.Stacks[1].RunImages[0], "packs/run")
+			})
+		})
+
+		when("config.toml already has the built-in stack", func() {
+			it.Before(func() {
+				w, err := os.Create(filepath.Join(tmpDir, "config.toml"))
+				assertNil(t, err)
+				defer w.Close()
+				w.Write([]byte(`
+[[stacks]]
+  id = "io.buildpacks.stacks.bionic"
+  build-images = ["some-other/build"]
+  run-images = ["some-other/run", "packs/run"]
+`))
+			})
+
+			it("does not modify the built-in stack", func() {
+				subject, err := config.New(tmpDir)
+				assertNil(t, err)
+
+				b, err := ioutil.ReadFile(filepath.Join(tmpDir, "config.toml"))
+				assertNil(t, err)
+				assertContains(t, string(b), `default-stack-id = "io.buildpacks.stacks.bionic"`)
+				assertContains(t, string(b), strings.TrimSpace(`
+[[stacks]]
+  id = "io.buildpacks.stacks.bionic"
+  build-images = ["some-other/build"]
+  run-images = ["some-other/run", "packs/run"]
+`))
+
+				assertEq(t, len(subject.Stacks), 1)
+				assertEq(t, subject.Stacks[0].ID, "io.buildpacks.stacks.bionic")
+				assertEq(t, len(subject.Stacks[0].BuildImages), 1)
+				assertEq(t, subject.Stacks[0].BuildImages[0], "some-other/build")
+				assertEq(t, len(subject.Stacks[0].RunImages), 2)
+				assertEq(t, subject.Stacks[0].RunImages[0], "some-other/run")
+				assertEq(t, subject.Stacks[0].RunImages[1], "packs/run")
+				assertEq(t, subject.DefaultStackID, "io.buildpacks.stacks.bionic")
+			})
 		})
 	})
 
-	when("config.toml already has the built-in stack", func() {
+	when("Config#Get", func() {
+		var subject *config.Config
 		it.Before(func() {
-			w, err := os.Create(filepath.Join(tmpDir, "config.toml"))
-			assertNil(t, err)
-			defer w.Close()
-			w.Write([]byte(`
+			assertNil(t, ioutil.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(`
+default-stack-id = "my.stack"
 [[stacks]]
-  id = "io.buildpacks.stacks.bionic"
-  build-images = ["some-other/build"]
-  run-images = ["some-other/run", "packs/run"]
-`))
-		})
-
-		it("does not modify the built-in stack", func() {
-			subject, err := config.New(tmpDir)
-			assertNil(t, err)
-
-			b, err := ioutil.ReadFile(filepath.Join(tmpDir, "config.toml"))
-			assertNil(t, err)
-			assertContains(t, string(b), `default-stack-id = "io.buildpacks.stacks.bionic"`)
-			assertContains(t, string(b), strings.TrimSpace(`
+  id = "stack-1"
 [[stacks]]
-  id = "io.buildpacks.stacks.bionic"
-  build-images = ["some-other/build"]
-  run-images = ["some-other/run", "packs/run"]
-`))
-
-			assertEq(t, len(subject.Stacks), 1)
-			assertEq(t, subject.Stacks[0].ID, "io.buildpacks.stacks.bionic")
-			assertEq(t, len(subject.Stacks[0].BuildImages), 1)
-			assertEq(t, subject.Stacks[0].BuildImages[0], "some-other/build")
-			assertEq(t, len(subject.Stacks[0].RunImages), 2)
-			assertEq(t, subject.Stacks[0].RunImages[0], "some-other/run")
-			assertEq(t, subject.Stacks[0].RunImages[1], "packs/run")
-			assertEq(t, subject.DefaultStackID, "io.buildpacks.stacks.bionic")
+  id = "my.stack"
+[[stacks]]
+  id = "stack-3"
+`), 0666))
+			var err error
+			subject, err = config.New(tmpDir)
+			assertNil(t, err)
 		})
+		when("no stack is requested", func() {
+			it("returns the default stack", func() {
+				stack, err := subject.Get("")
+				assertNil(t, err)
+				assertEq(t, stack.ID, "my.stack")
+			})
+		})
+		when("a stack known is requested", func() {
+			it("returns the stack", func() {
+				stack, err := subject.Get("stack-1")
+				assertNil(t, err)
+				assertEq(t, stack.ID, "stack-1")
+
+				stack, err = subject.Get("stack-3")
+				assertNil(t, err)
+				assertEq(t, stack.ID, "stack-3")
+			})
+		})
+		when("an unknown stack is requested", func() {
+			it("returns an error", func() {
+				_, err := subject.Get("stack-4")
+				assertNotNil(t, err)
+				assertEq(t, err.Error(), `Missing stack: stack with id "stack-4" not found in pack config.toml`)
+			})
+		})
+	})
+
+	when.Focus("Stack#RunImage", func() {
 	})
 }
 

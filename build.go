@@ -14,12 +14,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/buildpack/pack/config"
 	"github.com/buildpack/pack/fs"
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
+	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/pack/docker"
-	"github.com/buildpack/packs/img"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	dockercli "github.com/docker/docker/client"
@@ -57,6 +58,7 @@ type BuildFlags struct {
 	Stderr          io.Writer
 	Log             *log.Logger
 	FS              FS
+	Config          *config.Config
 }
 
 func (b *BuildFlags) Init() error {
@@ -78,6 +80,12 @@ func (b *BuildFlags) Init() error {
 	b.Stderr = os.Stderr
 	b.Log = log.New(os.Stdout, "", log.LstdFlags)
 	b.FS = &fs.FS{}
+
+	cfg, err := config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
+	if err != nil {
+		return err
+	}
+	b.Config = cfg
 
 	return nil
 }
@@ -235,6 +243,15 @@ func (b *BuildFlags) Build() error {
 }
 
 func (b *BuildFlags) Export(group *lifecycle.BuildpackGroup) error {
+	runImage := b.RunImage
+	// if runImage == "" {
+	// 	var err error
+	// 	runImage, err = b.Config.RunImage(b.Builder, b.RepoName)
+	// 	if err != nil {
+	// 		return errors.Wrap(err, "determing run image")
+	// 	}
+	// }
+
 	if b.Publish {
 		localWorkspaceDir, cleanup, err := b.exportVolume(b.Builder, b.WorkspaceVolume)
 		if err != nil {
@@ -242,7 +259,7 @@ func (b *BuildFlags) Export(group *lifecycle.BuildpackGroup) error {
 		}
 		defer cleanup()
 
-		imgSHA, err := exportRegistry(group, localWorkspaceDir, b.RepoName, b.RunImage, b.Stdout, b.Stderr)
+		imgSHA, err := exportRegistry(group, localWorkspaceDir, b.RepoName, runImage, b.Stdout, b.Stderr)
 		if err != nil {
 			return err
 		}
@@ -253,7 +270,7 @@ func (b *BuildFlags) Export(group *lifecycle.BuildpackGroup) error {
 			buildpacks = append(buildpacks, b.ID)
 		}
 
-		if err := exportDaemon(b.Cli, buildpacks, b.WorkspaceVolume, b.RepoName, b.RunImage, b.Stdout); err != nil {
+		if err := exportDaemon(b.Cli, buildpacks, b.WorkspaceVolume, b.RepoName, runImage, b.Stdout); err != nil {
 			return err
 		}
 	}

@@ -2,6 +2,12 @@ package pack_test
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/pack"
 	"github.com/buildpack/pack/config"
@@ -10,11 +16,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/sclevine/spec"
 	"github.com/sclevine/spec/report"
-	"io/ioutil"
-	"log"
-	"os/exec"
-	"path/filepath"
-	"testing"
 )
 
 func TestCreateBuilder(t *testing.T) {
@@ -22,7 +23,7 @@ func TestCreateBuilder(t *testing.T) {
 }
 
 //go:generate mockgen -package mocks -destination mocks/img.go github.com/google/go-containerregistry/pkg/v1 Image
-//go:generate mockgen -package mocks -destination mocks/store.go github.com/buildpack/packs/img Store
+//go:generate mockgen -package mocks -destination mocks/store.go github.com/buildpack/lifecycle/img Store
 
 func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 	when("#BuilderConfigFromFlags", func() {
@@ -133,12 +134,12 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 			}
 		})
 
-		it("fails if there is no build image for the stack", func(){
+		it("fails if there is no build image for the stack", func() {
 			factory.Config = &config.Config{
 				DefaultStackID: "some.bad.stack",
 				Stacks: []config.Stack{
 					{
-						ID:          "some.bad.stack",
+						ID: "some.bad.stack",
 					},
 				},
 			}
@@ -150,10 +151,10 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 			assertError(t, err, `Invalid stack: stack "some.bad.stack" requies at least one build image`)
 		})
 
-		it("uses the build image that matches the repoName registry", func(){})
+		it("uses the build image that matches the repoName registry", func() {})
 
-		when("-s flag is provided", func(){
-			it("used the build image from the selected stack", func(){
+		when("-s flag is provided", func() {
+			it("used the build image from the selected stack", func() {
 				mockBaseImage := mocks.NewMockImage(mockController)
 				mockImageStore := mocks.NewMockStore(mockController)
 				mockDocker.EXPECT().PullImage("other/build")
@@ -163,7 +164,7 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 				config, err := factory.BuilderConfigFromFlags(pack.CreateBuilderFlags{
 					RepoName:        "some/image",
 					BuilderTomlPath: filepath.Join("testdata", "builder.toml"),
-					StackID: "some.other.stack",
+					StackID:         "some.other.stack",
 				})
 				if err != nil {
 					t.Fatalf("error creating builder config: %s", err)
@@ -174,18 +175,18 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 				checkGroups(t, config.Groups)
 			})
 
-			it("fails if the provided stack id does not exist", func(){
+			it("fails if the provided stack id does not exist", func() {
 				_, err := factory.BuilderConfigFromFlags(pack.CreateBuilderFlags{
 					RepoName:        "some/image",
 					BuilderTomlPath: filepath.Join("testdata", "builder.toml"),
 					NoPull:          true,
-					StackID: "some.missing.stack",
+					StackID:         "some.missing.stack",
 				})
 				assertError(t, err, `Missing stack: stack with id "some.missing.stack" not found in pack config.toml`)
 			})
 		})
 
-		when ("--publish is passed", func(){
+		when("--publish is passed", func() {
 			it("uses a registry store and doesn't pull base image", func() {
 				mockBaseImage := mocks.NewMockImage(mockController)
 				mockImageStore := mocks.NewMockStore(mockController)
@@ -195,7 +196,7 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 				config, err := factory.BuilderConfigFromFlags(pack.CreateBuilderFlags{
 					RepoName:        "some/image",
 					BuilderTomlPath: filepath.Join("testdata", "builder.toml"),
-					Publish: true,
+					Publish:         true,
 				})
 				if err != nil {
 					t.Fatalf("error creating builder config: %s", err)

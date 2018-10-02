@@ -5,20 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/buildpack/pack/image"
 	"io"
 	"io/ioutil"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/buildpack/pack/image"
+
 	"github.com/buildpack/pack/fs"
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
+	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/packs"
-	"github.com/buildpack/packs/img"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/pkg/errors"
