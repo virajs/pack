@@ -201,7 +201,62 @@ default-stack-id = "my.stack"
 		})
 	})
 
-	when.Focus("Stack#RunImage", func() {
+	when("ImageByRegistry", func() {
+		var images []string
+		it.Before(func() {
+			images = []string{
+				"first.com/org/repo",
+				"myorg/myrepo",
+				"zonal.gcr.io/org/repo",
+				"gcr.io/org/repo",
+			}
+		})
+		when("repoName is dockerhub", func() {
+			it("returns the dockerhub image", func() {
+				name, err := config.ImageByRegistry("index.docker.io", images)
+				assertNil(t, err)
+				assertEq(t, name, "myorg/myrepo")
+			})
+		})
+		when("registry is gcr.io", func() {
+			it("returns the gcr.io image", func() {
+				name, err := config.ImageByRegistry("gcr.io", images)
+				assertNil(t, err)
+				assertEq(t, name, "gcr.io/org/repo")
+			})
+			when("registry is zonal.gcr.io", func() {
+				it("returns the gcr image", func() {
+					name, err := config.ImageByRegistry("zonal.gcr.io", images)
+					assertNil(t, err)
+					assertEq(t, name, "zonal.gcr.io/org/repo")
+				})
+			})
+			when("registry is missingzone.gcr.io", func() {
+				it("returns first run image", func() {
+					name, err := config.ImageByRegistry("missingzone.gcr.io", images)
+					assertNil(t, err)
+					assertEq(t, name, "first.com/org/repo")
+				})
+			})
+		})
+
+		when("one of the images is non-parsable", func() {
+			it.Before(func() {
+				images = []string{"as@ohd@as@op", "gcr.io/myorg/myrepo"}
+			})
+			it("skips over it", func() {
+				name, err := config.ImageByRegistry("gcr.io", images)
+				assertNil(t, err)
+				assertEq(t, name, "gcr.io/myorg/myrepo")
+			})
+		})
+
+		when("images is an empty slice", func() {
+			it("errors", func() {
+				_, err := config.ImageByRegistry("gcr.io", []string{})
+				assertNotNil(t, err)
+			})
+		})
 	})
 }
 

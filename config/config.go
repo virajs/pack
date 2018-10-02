@@ -1,11 +1,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/go-containerregistry/pkg/name"
 )
 
 type Config struct {
@@ -82,6 +84,19 @@ func (c *Config) Get(stackID string) (*Stack, error) {
 	return nil, fmt.Errorf(`Missing stack: stack with id "%s" not found in pack config.toml`, stackID)
 }
 
-func (c *Stack) RunImage(repoName string) (string, error) {
-	return "", nil
+func ImageByRegistry(registry string, images []string) (string, error) {
+	if len(images) == 0 {
+		return "", errors.New("empty images")
+	}
+	for _, i := range images {
+		ref, err := name.ParseReference(i, name.WeakValidation)
+		if err != nil {
+			continue
+		}
+		reg := ref.Context().RegistryStr()
+		if registry == reg {
+			return i, nil
+		}
+	}
+	return images[0], nil
 }

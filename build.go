@@ -246,7 +246,8 @@ func (b *BuildFlags) Export(group *lifecycle.BuildpackGroup) error {
 	runImage := b.RunImage
 	// if runImage == "" {
 	// 	var err error
-	// 	runImage, err = b.Config.RunImage(b.Builder, b.RepoName)
+	// registry := getReg(repoName)
+	// 	runImage, err = b.Config.Get("").RunImage(b.RepoName) // .RunImage(registry)
 	// 	if err != nil {
 	// 		return errors.Wrap(err, "determing run image")
 	// 	}
