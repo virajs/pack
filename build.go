@@ -29,18 +29,13 @@ import (
 	"github.com/pkg/errors"
 )
 
-func Build(appDir, buildImage, runImage, repoName string, publish bool) error {
-	b := &BuildFlags{
-		AppDir:   appDir,
-		Builder:  buildImage,
-		RunImage: runImage,
-		RepoName: repoName,
-		Publish:  publish,
-	}
-	if err := b.Init(); err != nil {
-		return err
-	}
-	return b.Run()
+type BuildFactory struct {
+	Cli    *docker.Client
+	Stdout io.Writer
+	Stderr io.Writer
+	Log    *log.Logger
+	FS     FS
+	Config *config.Config
 }
 
 type BuildFlags struct {
@@ -50,47 +45,92 @@ type BuildFlags struct {
 	RepoName string
 	Publish  bool
 	NoPull   bool
-	// Below are set by init
-	Cli             *docker.Client
+}
+
+type BuildConfig struct {
+	AppDir   string
+	Builder  string
+	RunImage string
+	RepoName string
+	Publish  bool
+	NoPull   bool
+	// Above are copied from BuildFlags are set by init
+	Cli    *docker.Client
+	Stdout io.Writer
+	Stderr io.Writer
+	Log    *log.Logger
+	FS     FS
+	Config *config.Config
+	// Above are copied from BuildFactory
 	WorkspaceVolume string
 	CacheVolume     string
-	Stdout          io.Writer
-	Stderr          io.Writer
-	Log             *log.Logger
-	FS              FS
-	Config          *config.Config
 }
 
-func (b *BuildFlags) Init() error {
+func DefaultBuildFactory() (*BuildFactory, error) {
+	f := &BuildFactory{
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+		Log:    log.New(os.Stdout, "", log.LstdFlags),
+		FS:     &fs.FS{},
+	}
+
 	var err error
-	b.AppDir, err = filepath.Abs(b.AppDir)
+	f.Cli, err = docker.New()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	b.Cli, err = docker.New()
+	f.Config, err = config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	b.WorkspaceVolume = fmt.Sprintf("pack-workspace-%x", uuid.New().String())
-	b.CacheVolume = fmt.Sprintf("pack-cache-%x", md5.Sum([]byte(b.AppDir)))
-
-	b.Stdout = os.Stdout
-	b.Stderr = os.Stderr
-	b.Log = log.New(os.Stdout, "", log.LstdFlags)
-	b.FS = &fs.FS{}
-
-	cfg, err := config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
-	if err != nil {
-		return err
-	}
-	b.Config = cfg
-
-	return nil
+	return f, nil
 }
 
-func (b *BuildFlags) Run() error {
+func (bf *BuildFactory) New(f *BuildFlags) (*BuildConfig, error) {
+	appDir, err := filepath.Abs(f.AppDir)
+	if err != nil {
+		return nil, err
+	}
+	b := &BuildConfig{
+		AppDir:          appDir,
+		Builder:         f.Builder,
+		RunImage:        f.RunImage,
+		RepoName:        f.RepoName,
+		Publish:         f.Publish,
+		NoPull:          f.NoPull,
+		Cli:             bf.Cli,
+		Stdout:          bf.Stdout,
+		Stderr:          bf.Stderr,
+		Log:             bf.Log,
+		FS:              bf.FS,
+		Config:          bf.Config,
+		WorkspaceVolume: fmt.Sprintf("pack-workspace-%x", uuid.New().String()),
+		CacheVolume:     fmt.Sprintf("pack-cache-%x", md5.Sum([]byte(appDir))),
+	}
+	return b, nil
+}
+
+func Build(appDir, buildImage, runImage, repoName string, publish bool) error {
+	bf, err := DefaultBuildFactory()
+	if err != nil {
+		return err
+	}
+	b, err := bf.New(&BuildFlags{
+		AppDir:   appDir,
+		Builder:  buildImage,
+		RunImage: runImage,
+		RepoName: repoName,
+		Publish:  publish,
+	})
+	if err != nil {
+		return err
+	}
+	return b.Run()
+}
+
+func (b *BuildConfig) Run() error {
 	defer b.Cli.VolumeRemove(context.Background(), b.WorkspaceVolume, true)
 	if !b.NoPull {
 		fmt.Println("*** PULLING BUILDER IMAGE LOCALLY:")
@@ -130,7 +170,7 @@ func (b *BuildFlags) Run() error {
 	return nil
 }
 
-func (b *BuildFlags) Detect() (*lifecycle.BuildpackGroup, error) {
+func (b *BuildConfig) Detect() (*lifecycle.BuildpackGroup, error) {
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 		Image: b.Builder,
@@ -168,7 +208,7 @@ func (b *BuildFlags) Detect() (*lifecycle.BuildpackGroup, error) {
 	return b.groupToml(ctr.ID)
 }
 
-func (b *BuildFlags) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) {
+func (b *BuildConfig) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) {
 	trc, _, err := b.Cli.CopyFromContainer(context.Background(), ctrID, "/workspace/group.toml")
 	if err != nil {
 		return nil, errors.Wrap(err, "reading group.toml from container")
@@ -186,7 +226,7 @@ func (b *BuildFlags) groupToml(ctrID string) (*lifecycle.BuildpackGroup, error) 
 	return &group, nil
 }
 
-func (b *BuildFlags) Analyze() error {
+func (b *BuildConfig) Analyze() error {
 	metadata, err := b.imageLabel(lifecycle.MetadataLabel)
 	if err != nil {
 		return errors.Wrap(err, "analyze image label")
@@ -223,7 +263,7 @@ func (b *BuildFlags) Analyze() error {
 	return nil
 }
 
-func (b *BuildFlags) Build() error {
+func (b *BuildConfig) Build() error {
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 		Image: b.Builder,
@@ -242,7 +282,7 @@ func (b *BuildFlags) Build() error {
 	return b.Cli.RunContainer(ctx, ctr.ID, b.Stdout, b.Stderr)
 }
 
-func (b *BuildFlags) Export(group *lifecycle.BuildpackGroup) error {
+func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 	runImage := b.RunImage
 	// if runImage == "" {
 	// 	var err error
@@ -279,7 +319,7 @@ func (b *BuildFlags) Export(group *lifecycle.BuildpackGroup) error {
 	return nil
 }
 
-func (b *BuildFlags) imageLabel(key string) (string, error) {
+func (b *BuildConfig) imageLabel(key string) (string, error) {
 	if b.Publish {
 		repoStore, err := img.NewRegistry(b.RepoName)
 		if err != nil {
@@ -315,7 +355,7 @@ func (b *BuildFlags) imageLabel(key string) (string, error) {
 	return i.Config.Labels[key], nil
 }
 
-func (b *BuildFlags) packUidGid(builder string) (int, int, error) {
+func (b *BuildConfig) packUidGid(builder string) (int, int, error) {
 	i, _, err := b.Cli.ImageInspectWithRaw(context.Background(), builder)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "reading builder env variables")
@@ -343,7 +383,7 @@ func (b *BuildFlags) packUidGid(builder string) (int, int, error) {
 	return uid, gid, nil
 }
 
-func (b *BuildFlags) chownDir(path string, uid, gid int) error {
+func (b *BuildConfig) chownDir(path string, uid, gid int) error {
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 		Image: b.Builder,
@@ -364,7 +404,7 @@ func (b *BuildFlags) chownDir(path string, uid, gid int) error {
 	return nil
 }
 
-func (b *BuildFlags) exportVolume(image, volName string) (string, func(), error) {
+func (b *BuildConfig) exportVolume(image, volName string) (string, func(), error) {
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 		Image: b.Builder,

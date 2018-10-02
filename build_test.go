@@ -35,12 +35,12 @@ func TestBuild(t *testing.T) {
 }
 
 func testBuild(t *testing.T, when spec.G, it spec.S) {
-	var subject *pack.BuildFlags
+	var subject *pack.BuildConfig
 	var buf bytes.Buffer
 
 	it.Before(func() {
 		var err error
-		subject = &pack.BuildFlags{
+		subject = &pack.BuildConfig{
 			AppDir:          "acceptance/testdata/node_app",
 			Builder:         "packs/samples",
 			RunImage:        "packs/run",

@@ -36,10 +36,15 @@ func buildCommand() *cobra.Command {
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			buildFlags.RepoName = args[0]
-			if err := buildFlags.Init(); err != nil {
+			bf, err := pack.DefaultBuildFactory()
+			if err != nil {
 				return err
 			}
-			return buildFlags.Run()
+			b, err := bf.New(&buildFlags)
+			if err != nil {
+				return err
+			}
+			return b.Run()
 		},
 	}
 	buildCommand.Flags().StringVarP(&buildFlags.AppDir, "path", "p", wd, "path to app dir")
