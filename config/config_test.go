@@ -31,7 +31,7 @@ func testConfig(t *testing.T, when spec.G, it spec.S) {
 		assertNil(t, err)
 	})
 
-	when(".New", func() {
+	when(".BuildConfigFromFlags", func() {
 		when("no config on disk", func() {
 			it("writes the defaults to disk", func() {
 				subject, err := config.New(tmpDir)

@@ -18,7 +18,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/lifecycle/img"
-	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/packs"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -75,7 +74,7 @@ func exportRegistry(group *lifecycle.BuildpackGroup, workspaceDir, repoName, sta
 	return sha.String(), nil
 }
 
-func exportDaemon(cli *docker.Client, buildpacks []string, workspaceVolume, repoName, runImage string, stdout io.Writer) error {
+func exportDaemon(cli Docker, buildpacks []string, workspaceVolume, repoName, runImage string, stdout io.Writer) error {
 	ctx := context.Background()
 	ctr, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:      runImage,
@@ -156,7 +155,7 @@ func exportDaemon(cli *docker.Client, buildpacks []string, workspaceVolume, repo
 	return nil
 }
 
-func addLabelToImage(cli *docker.Client, repoName string, labels map[string]string, stdout io.Writer) error {
+func addLabelToImage(cli Docker, repoName string, labels map[string]string, stdout io.Writer) error {
 	dockerfile := "FROM " + repoName + "\n"
 	for k, v := range labels {
 		dockerfile += fmt.Sprintf("LABEL %s='%s'\n", k, v)

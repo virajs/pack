@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/buildpack/pack/config"
+	"github.com/buildpack/pack/mocks"
+	"github.com/golang/mock/gomock"
+	"github.com/google/go-containerregistry/pkg/v1"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -56,6 +60,204 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 		log.SetOutput(ioutil.Discard)
 		subject.Cli, err = docker.New()
 		assertNil(t, err)
+	})
+
+	when("#BuildConfigFromFlags", func() {
+		var (
+			factory        *pack.BuildFactory
+			mockController *gomock.Controller
+			mockImages     *mocks.MockImages
+			mockDocker     *mocks.MockDocker
+		)
+
+		it.Before(func() {
+			mockController = gomock.NewController(t)
+			mockImages = mocks.NewMockImages(mockController)
+			mockDocker = mocks.NewMockDocker(mockController)
+
+			factory = &pack.BuildFactory{
+				Images: mockImages,
+				Config: &config.Config{
+					Stacks: []config.Stack{
+						{
+							ID:        "some.stack.id",
+							RunImages: []string{"some/run", "registry.com/some/run"},
+						},
+					},
+				},
+				Cli: mockDocker,
+			}
+		})
+
+		it.After(func() {
+			mockController.Finish()
+		})
+
+		it("defaults to daemon, pulls builder and run images, selects run-image using builder's stack", func() {
+			mockDocker.EXPECT().PullImage("some/builder")
+			mockBuilderImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/builder", true).Return(mockBuilderImage, nil)
+			mockBuilderImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+			mockDocker.EXPECT().PullImage("some/run")
+			mockRunImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/run", true).Return(mockRunImage, nil)
+			mockRunImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+
+			config, err := factory.BuildConfigFromFlags(&pack.BuildFlags{
+				RepoName: "some/app",
+				Builder:  "some/builder",
+			})
+			assertNil(t, err)
+			assertEq(t, config.RunImage, "some/run")
+		})
+
+		it("selects run images with matching registry", func() {
+			mockDocker.EXPECT().PullImage("some/builder")
+			mockBuilderImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/builder", true).Return(mockBuilderImage, nil)
+			mockBuilderImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+			mockDocker.EXPECT().PullImage("registry.com/some/run")
+			mockRunImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("registry.com/some/run", true).Return(mockRunImage, nil)
+			mockRunImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+
+			config, err := factory.BuildConfigFromFlags(&pack.BuildFlags{
+				RepoName: "registry.com/some/app",
+				Builder:  "some/builder",
+			})
+			assertNil(t, err)
+			assertEq(t, config.RunImage, "registry.com/some/run")
+		})
+
+		it("doesn't pull run images when --publish is passed", func() {
+			mockDocker.EXPECT().PullImage("some/builder")
+			mockBuilderImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/builder", true).Return(mockBuilderImage, nil)
+			mockBuilderImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+			mockRunImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/run", false).Return(mockRunImage, nil)
+			mockRunImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+
+			config, err := factory.BuildConfigFromFlags(&pack.BuildFlags{
+				RepoName: "some/app",
+				Builder:  "some/builder",
+				Publish:  true,
+			})
+			assertNil(t, err)
+			assertEq(t, config.RunImage, "some/run")
+		})
+
+		it("allows run-image from flags if the stacks match", func() {
+			mockDocker.EXPECT().PullImage("some/builder")
+			mockBuilderImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/builder", true).Return(mockBuilderImage, nil)
+			mockBuilderImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+			mockRunImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("override/run", false).Return(mockRunImage, nil)
+			mockRunImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+
+			config, err := factory.BuildConfigFromFlags(&pack.BuildFlags{
+				RepoName: "some/app",
+				Builder:  "some/builder",
+				RunImage: "override/run",
+				Publish: true,
+			})
+			assertNil(t, err)
+			assertEq(t, config.RunImage, "override/run")
+		})
+
+		it("doesn't allows run-image from flags if the stacks are difference", func() {
+			mockDocker.EXPECT().PullImage("some/builder")
+			mockBuilderImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/builder", true).Return(mockBuilderImage, nil)
+			mockBuilderImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "some.stack.id",
+					},
+				},
+			}, nil)
+			mockRunImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("override/run", false).Return(mockRunImage, nil)
+			mockRunImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{
+					Labels: map[string]string{
+						"io.buildpacks.stack.id": "other.stack.id",
+					},
+				},
+			}, nil)
+
+			_, err := factory.BuildConfigFromFlags(&pack.BuildFlags{
+				RepoName: "some/app",
+				Builder:  "some/builder",
+				RunImage: "override/run",
+				Publish: true,
+			})
+			assertError(t, err, `invalid run image stack "other.stack.id" does not match builder stack "some.stack.id"`)
+		})
+
+		it("returns an errors when the builder stack label is missing", func() {
+			mockDocker.EXPECT().PullImage("some/builder")
+			mockBuilderImage := mocks.NewMockImage(mockController)
+			mockImages.EXPECT().ReadImage("some/builder", true).Return(mockBuilderImage, nil)
+			mockBuilderImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{
+				Config: v1.Config{},
+			}, nil)
+
+			_, err := factory.BuildConfigFromFlags(&pack.BuildFlags{
+				RepoName: "some/app",
+				Builder:  "some/builder",
+			})
+			assertError(t, err, `invalid builder image "some/builder": missing required label "io.buildpacks.stack.id"`)
+		})
 	})
 
 	when("#Detect", func() {

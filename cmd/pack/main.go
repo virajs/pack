@@ -40,7 +40,7 @@ func buildCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := bf.New(&buildFlags)
+			b, err := bf.BuildConfigFromFlags(&buildFlags)
 			if err != nil {
 				return err
 			}

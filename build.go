@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
+	"github.com/buildpack/pack/image"
+	"github.com/google/go-containerregistry/pkg/v1"
 	"io"
 	"io/ioutil"
 	"log"
@@ -30,12 +32,13 @@ import (
 )
 
 type BuildFactory struct {
-	Cli    *docker.Client
+	Cli    Docker
 	Stdout io.Writer
 	Stderr io.Writer
 	Log    *log.Logger
 	FS     FS
 	Config *config.Config
+	Images Images
 }
 
 type BuildFlags struct {
@@ -53,9 +56,8 @@ type BuildConfig struct {
 	RunImage string
 	RepoName string
 	Publish  bool
-	NoPull   bool
 	// Above are copied from BuildFlags are set by init
-	Cli    *docker.Client
+	Cli    Docker
 	Stdout io.Writer
 	Stderr io.Writer
 	Log    *log.Logger
@@ -72,6 +74,7 @@ func DefaultBuildFactory() (*BuildFactory, error) {
 		Stderr: os.Stderr,
 		Log:    log.New(os.Stdout, "", log.LstdFlags),
 		FS:     &fs.FS{},
+		Images: &image.Client{},
 	}
 
 	var err error
@@ -88,18 +91,64 @@ func DefaultBuildFactory() (*BuildFactory, error) {
 	return f, nil
 }
 
-func (bf *BuildFactory) New(f *BuildFlags) (*BuildConfig, error) {
+func (bf *BuildFactory) BuildConfigFromFlags(f *BuildFlags) (*BuildConfig, error) {
 	appDir, err := filepath.Abs(f.AppDir)
 	if err != nil {
 		return nil, err
 	}
+	if !f.NoPull {
+		if err := bf.Cli.PullImage(f.Builder); err != nil {
+			return nil, err
+		}
+	}
+	builderImg, err := bf.Images.ReadImage(f.Builder, true)
+	if err != nil {
+		return nil, err
+	}
+	stackId, err := stackFromLabel(builderImg)
+	if err != nil {
+		return nil, fmt.Errorf(`invalid builder image "%s": %s`, f.Builder, err)
+	}
+	stack, err := bf.Config.Get(stackId)
+	if err != nil {
+		return nil, err
+	}
+	reg, err := config.Registry(f.RepoName)
+	if err != nil {
+		return nil, err
+	}
+	var runImage string
+	if f.RunImage == "" {
+		runImage, err = config.ImageByRegistry(reg, stack.RunImages)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		runImage = f.RunImage
+	}
+	if !f.NoPull && !f.Publish {
+		if err := bf.Cli.PullImage(runImage); err != nil {
+			return nil, err
+		}
+	}
+	runImg, err := bf.Images.ReadImage(runImage, !f.Publish)
+	if err != nil {
+		return nil, err
+	}
+	runStackId, err := stackFromLabel(runImg)
+	if err != nil {
+		return nil, fmt.Errorf(`invalid run image "%s": %s`, runImage, err)
+	}
+	if runStackId != stackId {
+		return nil, fmt.Errorf(`invalid run image stack "%s" does not match builder stack "%s"`, runStackId, stackId)
+	}
+
 	b := &BuildConfig{
 		AppDir:          appDir,
 		Builder:         f.Builder,
-		RunImage:        f.RunImage,
+		RunImage:        runImage,
 		RepoName:        f.RepoName,
 		Publish:         f.Publish,
-		NoPull:          f.NoPull,
 		Cli:             bf.Cli,
 		Stdout:          bf.Stdout,
 		Stderr:          bf.Stderr,
@@ -112,12 +161,24 @@ func (bf *BuildFactory) New(f *BuildFlags) (*BuildConfig, error) {
 	return b, nil
 }
 
+func stackFromLabel(img v1.Image) (string, error) {
+	configFile, err := img.ConfigFile()
+	if err != nil {
+		return "", err
+	}
+	stackId := configFile.Config.Labels["io.buildpacks.stack.id"]
+	if stackId == "" {
+		return "", errors.New(`missing required label "io.buildpacks.stack.id"`)
+	}
+	return stackId, nil
+}
+
 func Build(appDir, buildImage, runImage, repoName string, publish bool) error {
 	bf, err := DefaultBuildFactory()
 	if err != nil {
 		return err
 	}
-	b, err := bf.New(&BuildFlags{
+	b, err := bf.BuildConfigFromFlags(&BuildFlags{
 		AppDir:   appDir,
 		Builder:  buildImage,
 		RunImage: runImage,
@@ -132,12 +193,6 @@ func Build(appDir, buildImage, runImage, repoName string, publish bool) error {
 
 func (b *BuildConfig) Run() error {
 	defer b.Cli.VolumeRemove(context.Background(), b.WorkspaceVolume, true)
-	if !b.NoPull {
-		fmt.Println("*** PULLING BUILDER IMAGE LOCALLY:")
-		if err := b.Cli.PullImage(b.Builder); err != nil {
-			return errors.Wrapf(err, "pull image: %s", b.Builder)
-		}
-	}
 
 	fmt.Println("*** DETECTING:")
 	group, err := b.Detect()
@@ -153,13 +208,6 @@ func (b *BuildConfig) Run() error {
 	fmt.Println("*** BUILDING:")
 	if err := b.Build(); err != nil {
 		return err
-	}
-
-	if !b.Publish && !b.NoPull {
-		fmt.Println("*** PULLING RUN IMAGE LOCALLY:")
-		if err := b.Cli.PullImage(b.RunImage); err != nil {
-			return errors.Wrapf(err, "pull image: %s", b.RunImage)
-		}
 	}
 
 	fmt.Println("*** EXPORTING:")

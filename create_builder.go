@@ -1,7 +1,11 @@
 package pack
 
 import (
+	"context"
 	"fmt"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"io"
 	"io/ioutil"
 	"log"
@@ -32,6 +36,14 @@ type Buildpack struct {
 //go:generate mockgen -package mocks -destination mocks/docker.go github.com/buildpack/pack Docker
 type Docker interface {
 	PullImage(ref string) error
+	RunContainer(ctx context.Context, id string, stdout io.Writer, stderr io.Writer) error
+	VolumeRemove(ctx context.Context, volumeID string, force bool) error
+	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error)
+	ContainerRemove(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error
+	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options types.CopyToContainerOptions) error
+	CopyFromContainer(ctx context.Context, containerID, srcPath string) (io.ReadCloser, types.ContainerPathStat, error)
+	ImageBuild(ctx context.Context, buildContext io.Reader, options types.ImageBuildOptions) (types.ImageBuildResponse, error)
+	ImageInspectWithRaw(ctx context.Context, imageID string) (types.ImageInspect, []byte, error)
 }
 
 //go:generate mockgen -package mocks -destination mocks/images.go github.com/buildpack/pack Images
