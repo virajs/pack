@@ -1,15 +1,16 @@
 package config_test
 
 import (
-	"github.com/buildpack/pack/config"
-	"github.com/google/go-cmp/cmp"
-	"github.com/sclevine/spec"
-	"github.com/sclevine/spec/report"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/buildpack/pack/config"
+	"github.com/google/go-cmp/cmp"
+	"github.com/sclevine/spec"
+	"github.com/sclevine/spec/report"
 )
 
 func TestConfig(t *testing.T) {
@@ -52,6 +53,17 @@ func testConfig(t *testing.T, when spec.G, it spec.S) {
 			assertEq(t, len(subject.Stacks[0].RunImages), 1)
 			assertEq(t, subject.Stacks[0].RunImages[0], "packs/run")
 			assertEq(t, subject.DefaultStackID, "io.buildpacks.stacks.bionic")
+		})
+
+		when("path is missing", func() {
+			it("creates the directory", func() {
+				_, err := config.New(filepath.Join(tmpDir, "a", "b"))
+				assertNil(t, err)
+
+				b, err := ioutil.ReadFile(filepath.Join(tmpDir, "a", "b", "config.toml"))
+				assertNil(t, err)
+				assertContains(t, string(b), `default-stack-id = "io.buildpacks.stacks.bionic"`)
+			})
 		})
 	})
 

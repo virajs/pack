@@ -1,9 +1,13 @@
 package main
 
 import (
-	"github.com/buildpack/pack/docker"
 	"log"
 	"os"
+	"path/filepath"
+
+	"github.com/buildpack/pack/config"
+	"github.com/buildpack/pack/docker"
+	"github.com/buildpack/pack/image"
 
 	"github.com/buildpack/pack/fs"
 
@@ -58,10 +62,16 @@ func createBuilderCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cfg, err := config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
+			if err != nil {
+				return err
+			}
 			builderFactory := pack.BuilderFactory{
-				FS: &fs.FS{},
-				Log: log.New(os.Stdout, "", log.LstdFlags),
+				FS:     &fs.FS{},
+				Log:    log.New(os.Stdout, "", log.LstdFlags),
 				Docker: docker,
+				Config: cfg,
+				Images: &image.Client{},
 			}
 			builderConfig, err := builderFactory.BuilderConfigFromFlags(flags)
 			if err != nil {

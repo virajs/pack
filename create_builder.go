@@ -2,8 +2,6 @@ package pack
 
 import (
 	"fmt"
-	"github.com/buildpack/pack/config"
-	"github.com/google/go-containerregistry/pkg/v1"
 	"io"
 	"io/ioutil"
 	"log"
@@ -13,7 +11,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
-	"github.com/buildpack/lifecycle/img"
+	"github.com/buildpack/pack/config"
+	"github.com/buildpack/packs/img"
+	"github.com/google/go-containerregistry/pkg/v1"
 	"github.com/pkg/errors"
 )
 
@@ -41,9 +41,9 @@ type Images interface {
 }
 
 type BuilderFactory struct {
-	Log *log.Logger
+	Log    *log.Logger
 	Docker Docker
-	FS FS
+	FS     FS
 	Config *config.Config
 	Images Images
 }
@@ -57,11 +57,11 @@ type FS interface {
 }
 
 type CreateBuilderFlags struct {
-	RepoName    string
+	RepoName        string
 	BuilderTomlPath string
-	StackID string
-	Publish bool
-	NoPull bool
+	StackID         string
+	Publish         bool
+	NoPull          bool
 }
 
 func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (BuilderConfig, error) {

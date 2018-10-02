@@ -1,9 +1,10 @@
 package config
 
 import (
-	"github.com/BurntSushi/toml"
 	"os"
 	"path/filepath"
+
+	"github.com/BurntSushi/toml"
 )
 
 type Config struct {
@@ -33,6 +34,9 @@ func New(path string) (*Config, error) {
 		RunImages:   []string{"packs/run"},
 	})
 
+	if err := os.MkdirAll(filepath.Dir(configPath), 0777); err != nil {
+		return nil, err
+	}
 	w, err := os.OpenFile(configPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err

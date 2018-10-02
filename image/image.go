@@ -6,7 +6,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1"
 )
 
-type Client struct {}
+type Client struct{}
 
 func (c *Client) ReadImage(repoName string, useDaemon bool) (v1.Image, error) {
 	repoStore, err := c.RepoStore(repoName, useDaemon)
