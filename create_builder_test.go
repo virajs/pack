@@ -46,7 +46,7 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 					Stacks: []config.Stack{
 						{
 							ID:          "some.default.stack",
-							BuildImages: []string{"default/build"},
+							BuildImages: []string{"default/build", "registry.com/build/image"},
 							RunImages:   []string{"default/run"},
 						},
 						{
@@ -78,6 +78,26 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 
 			config, err := factory.BuilderConfigFromFlags(pack.CreateBuilderFlags{
 				RepoName:        "some/image",
+				BuilderTomlPath: filepath.Join("testdata", "builder.toml"),
+			})
+			if err != nil {
+				t.Fatalf("error creating builder config: %s", err)
+			}
+			assertSameInstance(t, config.BaseImage, mockBaseImage)
+			assertSameInstance(t, config.Repo, mockImageStore)
+			checkBuildpacks(t, config.Buildpacks)
+			checkGroups(t, config.Groups)
+		})
+
+		it("select the build image with matching registry", func() {
+			mockBaseImage := mocks.NewMockImage(mockController)
+			mockImageStore := mocks.NewMockStore(mockController)
+			mockDocker.EXPECT().PullImage("registry.com/build/image")
+			mockImages.EXPECT().ReadImage("registry.com/build/image", true).Return(mockBaseImage, nil)
+			mockImages.EXPECT().RepoStore("registry.com/some/image", true).Return(mockImageStore, nil)
+
+			config, err := factory.BuilderConfigFromFlags(pack.CreateBuilderFlags{
+				RepoName:        "registry.com/some/image",
 				BuilderTomlPath: filepath.Join("testdata", "builder.toml"),
 			})
 			if err != nil {

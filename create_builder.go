@@ -65,7 +65,7 @@ type CreateBuilderFlags struct {
 }
 
 func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (BuilderConfig, error) {
-	baseImage, err := f.baseImageName(flags.StackID)
+	baseImage, err := f.baseImageName(flags.StackID, flags.RepoName)
 	if err != nil {
 		return BuilderConfig{}, err
 	}
@@ -95,15 +95,19 @@ func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (Build
 	return builderConfig, nil
 }
 
-func (f *BuilderFactory) baseImageName(stackID string) (string, error) {
+func (f *BuilderFactory) baseImageName(stackID, repoName string) (string, error) {
 	stack, err := f.Config.Get(stackID)
 	if err != nil {
 		return "", err
 	}
-	if len(stack.BuildImages) < 1 {
+	if len(stack.BuildImages) == 0 {
 		return "", fmt.Errorf(`Invalid stack: stack "%s" requies at least one build image`, stack.ID)
 	}
-	return stack.BuildImages[0], nil
+	registry, err := config.Registry(repoName)
+	if err != nil {
+		return "", err
+	}
+	return config.ImageByRegistry(registry, stack.BuildImages)
 }
 
 func (f *BuilderFactory) Create(config BuilderConfig) error {

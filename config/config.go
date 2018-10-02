@@ -89,14 +89,21 @@ func ImageByRegistry(registry string, images []string) (string, error) {
 		return "", errors.New("empty images")
 	}
 	for _, i := range images {
-		ref, err := name.ParseReference(i, name.WeakValidation)
+		reg, err := Registry(i)
 		if err != nil {
 			continue
 		}
-		reg := ref.Context().RegistryStr()
 		if registry == reg {
 			return i, nil
 		}
 	}
 	return images[0], nil
+}
+
+func Registry(imageName string) (string, error) {
+	ref, err := name.ParseReference(imageName, name.WeakValidation)
+	if err != nil {
+		return "", err
+	}
+	return ref.Context().RegistryStr(), nil
 }
