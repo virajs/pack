@@ -298,7 +298,7 @@ func addDockerfileToTar(runImage, repoName string, buildpacks []string, r io.Rea
 
 func sortedKeys(m map[string]interface{}) []string {
 	keys := make([]string, 0, len(m))
-	for key, _ := range m {
+	for key := range m {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
