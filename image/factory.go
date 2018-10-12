@@ -1,9 +1,12 @@
 package image
 
 import (
+	"context"
 	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/packs"
+	"github.com/docker/docker/api/types"
 	"github.com/google/go-containerregistry/pkg/v1"
+	"log"
 )
 
 type Image2 interface {
@@ -14,6 +17,18 @@ type Image2 interface {
 	TopLayer() (string, error)
 	Save() (string, error)
 }
+
+type Docker interface {
+	PullImage(ref string) error
+	ImageInspectWithRaw(ctx context.Context, imageID string) (types.ImageInspect, []byte, error)
+}
+
+type Factory struct {
+	Docker Docker
+	Log    *log.Logger
+}
+
+
 
 type Client struct{}
 

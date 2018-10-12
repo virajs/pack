@@ -112,28 +112,6 @@ func (f *RebaseFactory) Rebase(cfg RebaseConfig) error {
 	}
 	f.Log.Printf("Successfully replaced %s with %s\n", cfg.Image.Name(), digest)
 	return nil
-	//newImage, err := mutate.Rebase(cfg.RepoImage, cfg.OldBase, cfg.NewBase, &mutate.RebaseOptions{})
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//// TODO : set runimage/sha on image metadata
-	//if err := f.setRunImageSHA(newImage, cfg.NewBase); err != nil {
-	//	return err
-	//}
-	//
-	//h, err := newImage.Digest()
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//// TODO write image
-	//if err := cfg.Repo.Write(newImage); err != nil {
-	//	return err
-	//}
-	//
-	//// TODO make sure hash is correct (I think it is currently wrong)
-	//return nil
 }
 
 // TODO copied from create_builder.go (called baseImage, and using baseImage (not run))
