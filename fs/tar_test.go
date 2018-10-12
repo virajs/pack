@@ -36,9 +36,7 @@ func testFS(t *testing.T, when spec.G, it spec.S) {
 	})
 
 	it.After(func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			t.Fatalf("failed to clean up tmp dir %s: %s", tmpDir, err)
-		}
+		os.RemoveAll(tmpDir)
 	})
 
 	it("writes a tar to the dest dir", func() {
