@@ -6,6 +6,15 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1"
 )
 
+type Image2 interface {
+	Label(string) (string, error)
+	Name() string
+	Rebase(string, Image2) error
+	SetLabel(string, string) error
+	TopLayer() (string, error)
+	Save() (string, error)
+}
+
 type Client struct{}
 
 func (c *Client) ReadImage(repoName string, useDaemon bool) (v1.Image, error) {
