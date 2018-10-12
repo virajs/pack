@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/buildpack/lifecycle"
+	"github.com/buildpack/pack/image"
 	"log"
 
 	"github.com/buildpack/pack/config"
 	dockercli "github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/pkg/errors"
@@ -17,11 +18,13 @@ import (
 
 type RebaseConfig struct {
 	RepoName  string
-	Publish   bool
 	Repo      WritableStore
 	RepoImage v1.Image
 	OldBase   v1.Image
 	NewBase   v1.Image
+
+	Image     image.Image2
+	BaseImage image.Image2
 }
 
 type WritableStore interface {
@@ -29,10 +32,11 @@ type WritableStore interface {
 }
 
 type RebaseFactory struct {
-	Log    *log.Logger
-	Docker Docker
-	Config *config.Config
-	Images Images
+	Log          *log.Logger
+	Docker       Docker
+	Config       *config.Config
+	Images       Images
+	ImageFactory ImageFactory
 }
 
 type RebaseFlags struct {
@@ -41,90 +45,77 @@ type RebaseFlags struct {
 	NoPull   bool
 }
 
+type ImageFactory interface {
+	NewLocal(string, bool) (image.Image2, error)
+	NewRemote(string) (image.Image2, error)
+}
+
 func (f *RebaseFactory) RebaseConfigFromFlags(flags RebaseFlags) (RebaseConfig, error) {
-	if !flags.NoPull && !flags.Publish {
-		f.Log.Println("Pulling image", flags.RepoName)
-		err := f.Docker.PullImage(flags.RepoName)
-		if err != nil {
-			return RebaseConfig{}, fmt.Errorf(`failed to pull stack build image "%s": %s`, flags.RepoName, err)
+	var newImage func(string) (image.Image2, error)
+	if flags.Publish {
+		newImage = f.ImageFactory.NewRemote
+	} else {
+		newImage = func(name string) (image.Image2, error) {
+			return f.ImageFactory.NewLocal(name, !flags.NoPull)
 		}
 	}
-	stackID, err := f.imageLabel(flags.RepoName, "io.buildpacks.stack.id", !flags.Publish)
+
+	image, err := newImage(flags.RepoName)
 	if err != nil {
 		return RebaseConfig{}, err
 	}
 
-	baseImageName, err := f.baseImageName(stackID, flags.RepoName)
+	stackID, err := image.Label("io.buildpacks.stack.id")
 	if err != nil {
 		return RebaseConfig{}, err
 	}
-	if !flags.NoPull && !flags.Publish {
-		f.Log.Println("Pulling base image", baseImageName)
-		err := f.Docker.PullImage(baseImageName)
-		if err != nil {
 
-			return RebaseConfig{}, fmt.Errorf(`failed to pull stack build image "%s": %s`, baseImageName, err)
-		}
+	baseImageName, err := f.runImageName(stackID, flags.RepoName)
+	if err != nil {
+		return RebaseConfig{}, err
 	}
 
-	repoStore, err := f.Images.RepoStore(flags.RepoName, !flags.Publish)
+	baseImage, err := newImage(baseImageName)
 	if err != nil {
-		return RebaseConfig{}, fmt.Errorf(`failed to create repository store for image "%s": %s`, flags.RepoName, err)
+		return RebaseConfig{}, err
 	}
-
-	f.Log.Println("Reading image", flags.RepoName)
-	repoImage, err := f.Images.ReadImage(flags.RepoName, !flags.Publish)
-	if err != nil {
-		return RebaseConfig{}, fmt.Errorf(`failed to read image "%s": %s`, flags.RepoName, err)
-	}
-	oldBase, err := f.fakeBaseImage(flags.RepoName, repoImage, !flags.Publish)
-	if err != nil {
-		return RebaseConfig{}, fmt.Errorf(`failed to read old base image "%s": %s`, baseImageName, err)
-	}
-	f.Log.Println("Reading new base image", baseImageName)
-	newBase, err := f.Images.ReadImage(baseImageName, !flags.Publish)
-	if err != nil {
-		return RebaseConfig{}, fmt.Errorf(`failed to read new base image "%s": %s`, baseImageName, err)
-	}
-
 	return RebaseConfig{
-		RepoName:  flags.RepoName,
-		Publish:   flags.Publish,
-		Repo:      repoStore,
-		RepoImage: repoImage,
-		OldBase:   oldBase,
-		NewBase:   newBase,
+		Image:     image,
+		BaseImage: baseImage,
 	}, nil
 }
 
 func (f *RebaseFactory) Rebase(cfg RebaseConfig) error {
-	newImage, err := mutate.Rebase(cfg.RepoImage, cfg.OldBase, cfg.NewBase, &mutate.RebaseOptions{})
+	label, err := cfg.Image.Label("io.buildpacks.lifecycle.metadata")
 	if err != nil {
 		return err
 	}
-
-	// TODO : set runimage/sha on image metadata
-	if err := f.setRunImageSHA(newImage, cfg.NewBase); err != nil {
+	var metadata lifecycle.AppImageMetadata
+	if err := json.Unmarshal([]byte(label), &metadata); err != nil {
 		return err
 	}
-
-	h, err := newImage.Digest()
+	if err := cfg.Image.Rebase(metadata.RunImage.SHA, cfg.BaseImage); err != nil {
+		return err
+	}
+	metadata.RunImage.SHA, err = cfg.BaseImage.TopLayer()
 	if err != nil {
 		return err
 	}
-
-	// TODO write image
-	if err := cfg.Repo.Write(newImage); err != nil {
+	newLabel, err := json.Marshal(metadata)
+	err = cfg.Image.SetLabel("io.buildpacks.lifecycle.metadata", string(newLabel))
+	if err != nil {
 		return err
 	}
-
-	// TODO make sure hash is correct (I think it is currently wrong)
-	f.Log.Printf("Successfully replaced %s with %s\n", cfg.RepoName, h)
+	digest, err := cfg.Image.Save()
+	if err != nil {
+		return err
+	}
+	f.Log.Printf("Successfully replaced %s with %s\n", cfg.Image.Name(), digest)
 	return nil
 }
 
-// TODO copied from create_builder.go
-func (f *RebaseFactory) baseImageName(stackID, repoName string) (string, error) {
+// TODO copied from create_builder.go (called baseImage, and using baseImage (not run))
+func (f *RebaseFactory) runImageName(stackID, repoName string) (string, error) {
 	stack, err := f.Config.Get(stackID)
 	if err != nil {
 		return "", err
