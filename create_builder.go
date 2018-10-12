@@ -134,8 +134,8 @@ func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (Build
 }
 
 func (f *BuilderFactory) resolveBuildpackURI(builderDir string, b struct {
-	ID     string `toml:"id"`;
-	URI    string `toml:"uri"`;
+	ID     string `toml:"id"`
+	URI    string `toml:"uri"`
 	Latest bool   `toml:"latest"`
 }) (Buildpack, error) {
 
