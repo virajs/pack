@@ -3,17 +3,18 @@ package image_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/buildpack/pack/docker"
-	"github.com/buildpack/pack/image"
-	"github.com/google/go-cmp/cmp"
-	"github.com/sclevine/spec"
-	"github.com/sclevine/spec/report"
 	"log"
 	"math/rand"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/buildpack/pack/docker"
+	"github.com/buildpack/pack/image"
+	"github.com/google/go-cmp/cmp"
+	"github.com/sclevine/spec"
+	"github.com/sclevine/spec/report"
 )
 
 func TestLocal(t *testing.T) {
@@ -32,6 +33,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		factory = image.Factory{
 			Docker: docker,
 			Log:    log.New(&buf, "", log.LstdFlags),
+			Stdout: &buf,
 		}
 		repoName = "pack-image-test-" + randString(10)
 	})
@@ -99,13 +101,13 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		it("saves label to docker daemon", func() {
-			//img, _ := factory.NewLocal(repoName, false)
-			//assertNil(t, img.SetLabel("mykey", "new-val"))
-			//_, err := img.Save()
-			//assertNil(t, err)
-			//
-			//label, err := exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels}}`).Output()
-			//assertEq(t, label, "new-val")
+			img, _ := factory.NewLocal(repoName, false)
+			assertNil(t, img.SetLabel("mykey", "new-val"))
+			_, err := img.Save()
+			assertNil(t, err)
+
+			label, err := exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels}}`).Output()
+			assertEq(t, label, "new-val")
 		})
 	})
 }

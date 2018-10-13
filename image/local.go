@@ -3,6 +3,8 @@ package image
 import (
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/docker/docker/api/types"
 	dockercli "github.com/docker/docker/client"
 	"github.com/pkg/errors"
@@ -12,6 +14,7 @@ type local struct {
 	RepoName string
 	Docker   Docker
 	Inspect  types.ImageInspect
+	Stdout   io.Writer
 }
 
 func (f *Factory) NewLocal(repoName string, pull bool) (Image2, error) {
@@ -31,6 +34,7 @@ func (f *Factory) NewLocal(repoName string, pull bool) (Image2, error) {
 		Docker:   f.Docker,
 		RepoName: repoName,
 		Inspect:  inspect,
+		Stdout:   f.Stdout,
 	}, nil
 }
 
@@ -63,12 +67,21 @@ func (*local) TopLayer() (string, error) {
 }
 
 func (l *local) Save() (string, error) {
-	//dockerFile := "FROM scratch\n"
-	//if l.Inspect.Config != nil {
-	//	for k, v := range l.Inspect.Config.Labels {
-	//		dockerFile += fmt.Sprintf("LABEL %s=%s\n", k, v)
-	//	}
-	//}
-	//for k
-	panic("implement me")
+	dockerFile := "FROM scratch\n"
+	if l.Inspect.Config != nil {
+		for k, v := range l.Inspect.Config.Labels {
+			dockerFile += fmt.Sprintf("LABEL %s=%s\n", k, v)
+		}
+	}
+
+	res, err := cli.ImageBuild(ctx, r2, dockertypes.ImageBuildOptions{Tags: []string{repoName}})
+	if err != nil {
+		return errors.Wrap(err, "image build")
+	}
+	defer res.Body.Close()
+	if _, err := parseImageBuildBody(res.Body, l.Stdout); err != nil {
+		return errors.Wrap(err, "image build")
+	}
+	res.Body.Close()
+	return nil
 }

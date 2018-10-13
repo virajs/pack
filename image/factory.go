@@ -2,11 +2,13 @@ package image
 
 import (
 	"context"
+	"io"
+	"log"
+
 	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/packs"
 	"github.com/docker/docker/api/types"
 	"github.com/google/go-containerregistry/pkg/v1"
-	"log"
 )
 
 type Image2 interface {
@@ -26,9 +28,8 @@ type Docker interface {
 type Factory struct {
 	Docker Docker
 	Log    *log.Logger
+	Stdout io.Writer
 }
-
-
 
 type Client struct{}
 
