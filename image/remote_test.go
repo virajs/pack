@@ -3,6 +3,7 @@ package image_test
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"os/exec"
@@ -21,6 +22,7 @@ var registryPort string
 
 func TestRemote(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
+	log.SetOutput(ioutil.Discard)
 
 	registryContainerName := "test-registry-" + randString(10)
 	defer exec.Command("docker", "kill", registryContainerName).Run()
@@ -147,7 +149,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 		})
 	})
 
-	when.Focus("#Rebase", func() {
+	when("#Rebase", func() {
 		when("image exists", func() {
 			var oldBase, oldTopLayer, newBase string
 			it.Before(func() {
@@ -175,7 +177,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				exec.Command("docker", "rmi", repoName).Run()
 			})
 
-			it("switches the base", func() {
+			it.Focus("switches the base", func() {
 				// Before
 				txt, err := exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
 				assertNil(t, err)
@@ -186,10 +188,17 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				assertNil(t, err)
 				newBaseImg, err := factory.NewRemote(newBase)
 				assertNil(t, err)
+				fmt.Println("BEFORE REBASE")
 				err = img.Rebase(oldTopLayer, newBaseImg)
+				fmt.Println("AFTER REBASE")
+				assertNil(t, err)
+				fmt.Println("BEFORE SAVE")
+				_, err = img.Save()
+				fmt.Println("AFTER SAVE")
 				assertNil(t, err)
 
 				// After
+				run(t, exec.Command("docker", "pull", repoName))
 				txt, err = exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
 				assertNil(t, err)
 				assertEq(t, string(txt), "new-base\n")
