@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/buildpack/pack/docker"
+	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/pack/image"
 	"github.com/google/go-cmp/cmp"
 	"github.com/sclevine/spec"
@@ -34,6 +35,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			Docker: docker,
 			Log:    log.New(&buf, "", log.LstdFlags),
 			Stdout: &buf,
+			FS:     &fs.FS{},
 		}
 		repoName = "pack-image-test-" + randString(10)
 	})
@@ -92,22 +94,32 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	})
 
 	when("#SetLabel", func() {
-		it("sets label on img object", func() {
-			img, _ := factory.NewLocal(repoName, false)
-			assertNil(t, img.SetLabel("mykey", "new-val"))
-			label, err := img.Label("mykey")
-			assertNil(t, err)
-			assertEq(t, label, "new-val")
-		})
+		when("image exists", func() {
+			it.Before(func() {
+				cmd := exec.Command("docker", "build", "-t", repoName, "-")
+				cmd.Stdin = strings.NewReader(`
+					FROM scratch
+					LABEL mykey=myvalue other=data
+				`)
+				assertNil(t, cmd.Run())
+			})
+			it("sets label on img object", func() {
+				img, _ := factory.NewLocal(repoName, false)
+				assertNil(t, img.SetLabel("mykey", "new-val"))
+				label, err := img.Label("mykey")
+				assertNil(t, err)
+				assertEq(t, label, "new-val")
+			})
 
-		it("saves label to docker daemon", func() {
-			img, _ := factory.NewLocal(repoName, false)
-			assertNil(t, img.SetLabel("mykey", "new-val"))
-			_, err := img.Save()
-			assertNil(t, err)
+			it("saves label to docker daemon", func() {
+				img, _ := factory.NewLocal(repoName, false)
+				assertNil(t, img.SetLabel("mykey", "new-val"))
+				_, err := img.Save()
+				assertNil(t, err)
 
-			label, err := exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels}}`).Output()
-			assertEq(t, label, "new-val")
+				label, err := exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels.mykey}}`).Output()
+				assertEq(t, strings.TrimSpace(string(label)), "new-val")
+			})
 		})
 	})
 }

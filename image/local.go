@@ -2,10 +2,14 @@ package image
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
+	"github.com/buildpack/pack/fs"
 	"github.com/docker/docker/api/types"
+	dockertypes "github.com/docker/docker/api/types"
 	dockercli "github.com/docker/docker/client"
 	"github.com/pkg/errors"
 )
@@ -15,6 +19,7 @@ type local struct {
 	Docker   Docker
 	Inspect  types.ImageInspect
 	Stdout   io.Writer
+	FS       *fs.FS
 }
 
 func (f *Factory) NewLocal(repoName string, pull bool) (Image2, error) {
@@ -35,6 +40,7 @@ func (f *Factory) NewLocal(repoName string, pull bool) (Image2, error) {
 		RepoName: repoName,
 		Inspect:  inspect,
 		Stdout:   f.Stdout,
+		FS:       f.FS,
 	}, nil
 }
 
@@ -74,14 +80,53 @@ func (l *local) Save() (string, error) {
 		}
 	}
 
-	res, err := cli.ImageBuild(ctx, r2, dockertypes.ImageBuildOptions{Tags: []string{repoName}})
+	r2, err := l.FS.CreateSingleFileTar("Dockerfile", dockerFile)
 	if err != nil {
-		return errors.Wrap(err, "image build")
+		return "", errors.Wrap(err, "image build")
+	}
+
+	res, err := l.Docker.ImageBuild(context.TODO(), r2, dockertypes.ImageBuildOptions{Tags: []string{l.RepoName}})
+	if err != nil {
+		return "", errors.Wrap(err, "image build")
 	}
 	defer res.Body.Close()
 	if _, err := parseImageBuildBody(res.Body, l.Stdout); err != nil {
-		return errors.Wrap(err, "image build")
+		return "", errors.Wrap(err, "image build")
 	}
 	res.Body.Close()
-	return nil
+
+	return "TODO", nil
+}
+
+// TODO copied from exporter.go
+func parseImageBuildBody(r io.Reader, out io.Writer) (string, error) {
+	jr := json.NewDecoder(r)
+	var id string
+	var streamError error
+	var obj struct {
+		Stream string `json:"stream"`
+		Error  string `json:"error"`
+		Aux    struct {
+			ID string `json:"ID"`
+		} `json:"aux"`
+	}
+	for {
+		err := jr.Decode(&obj)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", err
+		}
+		if obj.Aux.ID != "" {
+			id = obj.Aux.ID
+		}
+		if txt := strings.TrimSpace(obj.Stream); txt != "" {
+			fmt.Fprintln(out, txt)
+		}
+		if txt := strings.TrimSpace(obj.Error); txt != "" {
+			streamError = errors.New(txt)
+		}
+	}
+	return id, streamError
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/buildpack/lifecycle/img"
+	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/packs"
 	"github.com/docker/docker/api/types"
 	"github.com/google/go-containerregistry/pkg/v1"
@@ -23,12 +24,14 @@ type Image2 interface {
 type Docker interface {
 	PullImage(ref string) error
 	ImageInspectWithRaw(ctx context.Context, imageID string) (types.ImageInspect, []byte, error)
+	ImageBuild(ctx context.Context, buildContext io.Reader, options types.ImageBuildOptions) (types.ImageBuildResponse, error)
 }
 
 type Factory struct {
 	Docker Docker
 	Log    *log.Logger
 	Stdout io.Writer
+	FS     *fs.FS
 }
 
 type Client struct{}
