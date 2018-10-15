@@ -146,6 +146,56 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 			})
 		})
 	})
+
+	when.Focus("#Rebase", func() {
+		when("image exists", func() {
+			var oldBase, oldTopLayer, newBase string
+			it.Before(func() {
+				oldBase = "localhost:" + registryPort + "/pack-oldbase-test-" + randString(10)
+				oldTopLayer = createImageOnRemote(t, oldBase, `
+					FROM busybox
+					RUN echo old-base > base.txt
+					RUN echo text-old-base > otherfile.txt
+				`)
+
+				newBase = "localhost:" + registryPort + "/pack-newbase-test-" + randString(10)
+				createImageOnRemote(t, newBase, `
+					FROM busybox
+					RUN echo new-base > base.txt
+					RUN echo text-new-base > otherfile.txt
+				`)
+
+				createImageOnRemote(t, repoName, fmt.Sprintf(`
+					FROM %s
+					RUN echo text-from-image > myimage.txt
+					RUN echo text-from-image > myimage2.txt
+				`, oldBase))
+			})
+			it.After(func() {
+				exec.Command("docker", "rmi", repoName).Run()
+			})
+
+			it("switches the base", func() {
+				// Before
+				txt, err := exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
+				assertNil(t, err)
+				assertEq(t, string(txt), "old-base\n")
+
+				// Run rebase
+				img, err := factory.NewRemote(repoName)
+				assertNil(t, err)
+				newBaseImg, err := factory.NewRemote(newBase)
+				assertNil(t, err)
+				err = img.Rebase(oldTopLayer, newBaseImg)
+				assertNil(t, err)
+
+				// After
+				txt, err = exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
+				assertNil(t, err)
+				assertEq(t, string(txt), "new-base\n")
+			})
+		})
+	})
 }
 
 func run(t *testing.T, cmd *exec.Cmd) string {
@@ -157,4 +207,20 @@ func run(t *testing.T, cmd *exec.Cmd) string {
 	}
 
 	return string(output)
+}
+
+func createImageOnRemote(t *testing.T, repoName, dockerFile string) string {
+	t.Helper()
+	defer exec.Command("docker", "rmi", repoName)
+
+	cmd := exec.Command("docker", "build", "-t", repoName, "-")
+	cmd.Stdin = strings.NewReader(dockerFile)
+	run(t, cmd)
+
+	topLayer, err := exec.Command("docker", "inspect", repoName, "-f", `{{index .RootFS.Layers 2}}`).Output()
+	assertNil(t, err)
+
+	run(t, exec.Command("docker", "push", repoName))
+
+	return strings.TrimSpace(string(topLayer))
 }
