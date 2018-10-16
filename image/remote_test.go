@@ -25,13 +25,12 @@ func TestRemote(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
 	log.SetOutput(ioutil.Discard)
 
-	// registryContainerName := "test-registry-" + randString(10)
-	// // defer exec.Command("docker", "kill", registryContainerName).Run()
-	// run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", registryContainerName, "registry:2"))
-	// b, err := exec.Command("docker", "inspect", registryContainerName, "-f", `{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}`).Output()
-	// assertNil(t, err)
-	// registryPort = strings.TrimSpace(string(b))
-	registryPort = "32854"
+	registryContainerName := "test-registry-" + randString(10)
+	defer exec.Command("docker", "kill", registryContainerName).Run()
+	run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", registryContainerName, "registry:2"))
+	b, err := exec.Command("docker", "inspect", registryContainerName, "-f", `{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}`).Output()
+	assertNil(t, err)
+	registryPort = strings.TrimSpace(string(b))
 
 	spec.Run(t, "remote", testRemote, spec.Parallel(), spec.Report(report.Terminal{}))
 }
