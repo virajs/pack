@@ -2,6 +2,7 @@ package image_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -38,6 +39,9 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			FS:     &fs.FS{},
 		}
 		repoName = "pack-image-test-" + randString(10)
+	})
+	it.After(func() {
+		// exec.Command("docker", "rmi", "-f", repoName).Run()
 	})
 
 	when("#NewLocal", func() {
@@ -122,6 +126,103 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			})
 		})
 	})
+
+	when("#Rebase", func() {
+		when("image exists", func() {
+			var oldBase, oldTopLayer, newBase string
+			it.Before(func() {
+				oldBase = "pack-oldbase-test-" + randString(10)
+				oldTopLayer = createImageOnLocal(t, oldBase, `
+					FROM busybox
+					RUN echo old-base > base.txt
+					RUN echo text-old-base > otherfile.txt
+				`)
+
+				newBase = "pack-newbase-test-" + randString(10)
+				createImageOnLocal(t, newBase, `
+					FROM busybox
+					RUN echo new-base > base.txt
+					RUN echo text-new-base > otherfile.txt
+				`)
+
+				createImageOnLocal(t, repoName, fmt.Sprintf(`
+					FROM %s
+					RUN echo text-from-image > myimage.txt
+					RUN echo text-from-image > myimage2.txt
+				`, oldBase))
+			})
+			it.After(func() {
+				exec.Command("docker", "rmi", oldBase, newBase).Run()
+			})
+
+			it.Pend("switches the base", func() {
+				// Before
+				txt, err := exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
+				assertNil(t, err)
+				assertEq(t, string(txt), "old-base\n")
+
+				// Run rebase
+				img, err := factory.NewLocal(repoName, false)
+				assertNil(t, err)
+				newBaseImg, err := factory.NewLocal(newBase, false)
+				assertNil(t, err)
+				err = img.Rebase(oldTopLayer, newBaseImg)
+				assertNil(t, err)
+				_, err = img.Save()
+				assertNil(t, err)
+
+				// After
+				txt, err = exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
+				assertNil(t, err)
+				assertEq(t, string(txt), "new-base\n")
+			})
+		})
+	})
+
+	when("#TopLayer", func() {
+		when("image exists", func() {
+			it("returns the digest for the top layer (useful for rebasing)", func() {
+				expectedTopLayer := createImageOnLocal(t, repoName, `
+					FROM busybox
+					RUN echo old-base > base.txt
+					RUN echo text-old-base > otherfile.txt
+				`)
+
+				img, err := factory.NewLocal(repoName, false)
+				assertNil(t, err)
+
+				actualTopLayer, err := img.TopLayer()
+				assertNil(t, err)
+
+				assertEq(t, actualTopLayer, expectedTopLayer)
+			})
+		})
+	})
+
+	when("#Save", func() {
+		when("image exists", func() {
+			it("returns the image digest", func() {
+				createImageOnLocal(t, repoName, `
+					FROM busybox
+					LABEL mykey=oldValue
+				`)
+
+				img, err := factory.NewLocal(repoName, false)
+				assertNil(t, err)
+
+				err = img.SetLabel("mykey", "newValue")
+				assertNil(t, err)
+
+				imgDigest, err := img.Save()
+				assertNil(t, err)
+
+				// After Pull
+				fmt.Println("docker", "inspect", imgDigest, "-f", `{{.Config.Labels.mykey}}`)
+				label, err := exec.Command("docker", "inspect", imgDigest, "-f", `{{.Config.Labels.mykey}}`).Output()
+				assertEq(t, strings.TrimSpace(string(label)), "newValue")
+			})
+		})
+	})
 }
 
 func assertNil(t *testing.T, actual interface{}) {
@@ -155,4 +256,20 @@ func assertError(t *testing.T, actual error, expected string) {
 	if actual.Error() != expected {
 		t.Fatalf(`Expected error to equal "%s", got "%s"`, expected, actual.Error())
 	}
+}
+
+func createImageOnLocal(t *testing.T, repoName, dockerFile string) string {
+	t.Helper()
+
+	cmd := exec.Command("docker", "build", "-t", repoName+":latest", "-")
+	cmd.Stdin = strings.NewReader(dockerFile)
+	run(t, cmd)
+
+	topLayerJSON, err := exec.Command("docker", "inspect", repoName, "-f", `{{json .RootFS.Layers}}`).Output()
+	assertNil(t, err)
+	var layers []string
+	assertNil(t, json.Unmarshal(topLayerJSON, &layers))
+	topLayer := layers[len(layers)-1]
+
+	return topLayer
 }

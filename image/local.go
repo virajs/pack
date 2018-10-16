@@ -56,8 +56,21 @@ func (l *local) Name() string {
 	return l.RepoName
 }
 
-func (*local) Rebase(string, Image2) error {
+func (l *local) Rebase(baseTopLayer string, newBase Image2) error {
 	panic("implement me")
+
+	// newBaseRemote, ok := newBase.(*remote)
+	// if !ok {
+	// 	return errors.New("expected new base to be a remote image")
+	// }
+
+	// oldBase := &subImage{img: r.Image, topSHA: baseTopLayer}
+	// newImage, err := mutate.Rebase(r.Image, oldBase, newBaseRemote.Image, &mutate.RebaseOptions{})
+	// if err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
+	// r.Image = newImage
+	// return nil
 }
 
 func (l *local) SetLabel(key, val string) error {
@@ -68,8 +81,10 @@ func (l *local) SetLabel(key, val string) error {
 	return nil
 }
 
-func (*local) TopLayer() (string, error) {
-	panic("implement me")
+func (l *local) TopLayer() (string, error) {
+	all := l.Inspect.RootFS.Layers
+	topLayer := all[len(all)-1]
+	return topLayer, nil
 }
 
 func (l *local) Save() (string, error) {
@@ -90,12 +105,13 @@ func (l *local) Save() (string, error) {
 		return "", errors.Wrap(err, "image build")
 	}
 	defer res.Body.Close()
-	if _, err := parseImageBuildBody(res.Body, l.Stdout); err != nil {
+	imageID, err := parseImageBuildBody(res.Body, l.Stdout)
+	if err != nil {
 		return "", errors.Wrap(err, "image build")
 	}
 	res.Body.Close()
 
-	return "TODO", nil
+	return imageID, nil
 }
 
 // TODO copied from exporter.go
