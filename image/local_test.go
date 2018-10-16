@@ -155,7 +155,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				exec.Command("docker", "rmi", oldBase, newBase).Run()
 			})
 
-			it.Pend("switches the base", func() {
+			it("switches the base", func() {
 				// Before
 				txt, err := exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
 				assertNil(t, err)
@@ -216,8 +216,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				imgDigest, err := img.Save()
 				assertNil(t, err)
 
-				// After Pull
-				fmt.Println("docker", "inspect", imgDigest, "-f", `{{.Config.Labels.mykey}}`)
 				label, err := exec.Command("docker", "inspect", imgDigest, "-f", `{{.Config.Labels.mykey}}`).Output()
 				assertEq(t, strings.TrimSpace(string(label)), "newValue")
 			})

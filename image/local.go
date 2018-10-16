@@ -5,21 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"strings"
 
+	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/pack/fs"
 	"github.com/docker/docker/api/types"
 	dockertypes "github.com/docker/docker/api/types"
 	dockercli "github.com/docker/docker/client"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/pkg/errors"
 )
 
 type local struct {
-	RepoName string
-	Docker   Docker
-	Inspect  types.ImageInspect
-	Stdout   io.Writer
-	FS       *fs.FS
+	RepoName         string
+	Docker           Docker
+	Inspect          types.ImageInspect
+	Stdout           io.Writer
+	FS               *fs.FS
+	currentTempImage string
 }
 
 func (f *Factory) NewLocal(repoName string, pull bool) (Image2, error) {
@@ -57,20 +61,40 @@ func (l *local) Name() string {
 }
 
 func (l *local) Rebase(baseTopLayer string, newBase Image2) error {
-	panic("implement me")
+	repoStore, err := img.NewDaemon(l.RepoName)
+	if err != nil {
+		return errors.Wrap(err, "rebase")
+	}
+	image, err := repoStore.Image()
+	if err != nil {
+		return errors.Wrap(err, "rebase")
+	}
 
-	// newBaseRemote, ok := newBase.(*remote)
-	// if !ok {
-	// 	return errors.New("expected new base to be a remote image")
-	// }
+	newBaseStore, err := img.NewDaemon(newBase.Name())
+	if err != nil {
+		return errors.Wrap(err, "rebase")
+	}
+	newBaseImage, err := newBaseStore.Image()
+	if err != nil {
+		return errors.Wrap(err, "rebase")
+	}
 
-	// oldBase := &subImage{img: r.Image, topSHA: baseTopLayer}
-	// newImage, err := mutate.Rebase(r.Image, oldBase, newBaseRemote.Image, &mutate.RebaseOptions{})
-	// if err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
-	// r.Image = newImage
-	// return nil
+	oldBase := &subImage{img: image, topSHA: baseTopLayer}
+	image, err = mutate.Rebase(image, oldBase, newBaseImage, &mutate.RebaseOptions{})
+	if err != nil {
+		return errors.Wrap(err, "rebase")
+	}
+
+	l.currentTempImage = "pack-rebase-tmp-" + randString(8)
+	repoStore, err = img.NewDaemon(l.currentTempImage)
+	if err != nil {
+		return errors.Wrap(err, "rebase")
+	}
+	if err := repoStore.Write(image); err != nil {
+		return errors.Wrap(err, "rebase")
+	}
+
+	return nil
 }
 
 func (l *local) SetLabel(key, val string) error {
@@ -89,6 +113,13 @@ func (l *local) TopLayer() (string, error) {
 
 func (l *local) Save() (string, error) {
 	dockerFile := "FROM scratch\n"
+	if l.currentTempImage != "" {
+		dockerFile = fmt.Sprintf("FROM %s\n", l.currentTempImage)
+		defer func() {
+			l.Docker.ImageRemove(context.TODO(), l.currentTempImage, dockertypes.ImageRemoveOptions{})
+			l.currentTempImage = ""
+		}()
+	}
 	if l.Inspect.Config != nil {
 		for k, v := range l.Inspect.Config.Labels {
 			dockerFile += fmt.Sprintf("LABEL %s=%s\n", k, v)
@@ -145,4 +176,12 @@ func parseImageBuildBody(r io.Reader, out io.Writer) (string, error) {
 		}
 	}
 	return id, streamError
+}
+
+func randString(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = 'a' + byte(rand.Intn(26))
+	}
+	return string(b)
 }
