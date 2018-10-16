@@ -8,20 +8,11 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/pkg/errors"
-	// dockertypes "github.com/docker/docker/api/types"
 )
-
-// type constError string
-// func (e constError) Error() string { return string(e) }
-// const NotFound = constError("image not found")
 
 type remote struct {
 	RepoName string
 	Image    v1.Image
-	// Docker   Docker
-	// Inspect  types.ImageInspect
-	// Stdout   io.Writer
-	// FS       *fs.FS
 }
 
 func (f *Factory) NewRemote(repoName string) (Image2, error) {
@@ -37,9 +28,6 @@ func (f *Factory) NewRemote(repoName string) (Image2, error) {
 	return &remote{
 		RepoName: repoName,
 		Image:    image,
-		// Inspect:  inspect,
-		// Stdout:   f.Stdout,
-		// FS:       f.FS,
 	}, nil
 }
 
@@ -81,8 +69,17 @@ func (r *remote) SetLabel(key, val string) error {
 	return nil
 }
 
-func (*remote) TopLayer() (string, error) {
-	panic("implement me")
+func (r *remote) TopLayer() (string, error) {
+	all, err := r.Image.Layers()
+	if err != nil {
+		return "", err
+	}
+	topLayer := all[len(all)-1]
+	hex, err := topLayer.DiffID()
+	if err != nil {
+		return "", err
+	}
+	return hex.String(), nil
 }
 
 func (r *remote) Save() (string, error) {
@@ -93,7 +90,10 @@ func (r *remote) Save() (string, error) {
 	if err := repoStore.Write(r.Image); err != nil {
 		return "", err
 	}
-	return "TODO", nil
+
+	hex, err := r.Image.Digest()
+
+	return hex.String(), nil
 }
 
 type subImage struct {

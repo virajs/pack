@@ -2,6 +2,7 @@ package image_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -24,12 +25,13 @@ func TestRemote(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
 	log.SetOutput(ioutil.Discard)
 
-	registryContainerName := "test-registry-" + randString(10)
-	defer exec.Command("docker", "kill", registryContainerName).Run()
-	run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", registryContainerName, "registry:2"))
-	b, err := exec.Command("docker", "inspect", registryContainerName, "-f", `{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}`).Output()
-	assertNil(t, err)
-	registryPort = strings.TrimSpace(string(b))
+	// registryContainerName := "test-registry-" + randString(10)
+	// // defer exec.Command("docker", "kill", registryContainerName).Run()
+	// run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", registryContainerName, "registry:2"))
+	// b, err := exec.Command("docker", "inspect", registryContainerName, "-f", `{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}`).Output()
+	// assertNil(t, err)
+	// registryPort = strings.TrimSpace(string(b))
+	registryPort = "32854"
 
 	spec.Run(t, "remote", testRemote, spec.Parallel(), spec.Report(report.Terminal{}))
 }
@@ -49,6 +51,10 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 			FS:     &fs.FS{},
 		}
 		repoName = "localhost:" + registryPort + "/pack-image-test-" + randString(10)
+	})
+	it.After(func() {
+		exec.Command("docker", "rmi", "-f", repoName).Run()
+		exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, repoName)).Run()
 	})
 
 	when("#NewRemote", func() {
@@ -174,10 +180,10 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`, oldBase))
 			})
 			it.After(func() {
-				exec.Command("docker", "rmi", repoName).Run()
+				exec.Command("docker", "rmi", oldBase, newBase).Run()
 			})
 
-			it.Focus("switches the base", func() {
+			it("switches the base", func() {
 				// Before
 				txt, err := exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
 				assertNil(t, err)
@@ -188,13 +194,9 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				assertNil(t, err)
 				newBaseImg, err := factory.NewRemote(newBase)
 				assertNil(t, err)
-				fmt.Println("BEFORE REBASE")
 				err = img.Rebase(oldTopLayer, newBaseImg)
-				fmt.Println("AFTER REBASE")
 				assertNil(t, err)
-				fmt.Println("BEFORE SAVE")
 				_, err = img.Save()
-				fmt.Println("AFTER SAVE")
 				assertNil(t, err)
 
 				// After
@@ -202,6 +204,52 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				txt, err = exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
 				assertNil(t, err)
 				assertEq(t, string(txt), "new-base\n")
+			})
+		})
+	})
+
+	when("#TopLayer", func() {
+		when("image exists", func() {
+			it("returns the digest for the top layer (useful for rebasing)", func() {
+				expectedTopLayer := createImageOnRemote(t, repoName, `
+					FROM busybox
+					RUN echo old-base > base.txt
+					RUN echo text-old-base > otherfile.txt
+				`)
+
+				img, err := factory.NewRemote(repoName)
+				assertNil(t, err)
+
+				actualTopLayer, err := img.TopLayer()
+				assertNil(t, err)
+
+				assertEq(t, actualTopLayer, expectedTopLayer)
+			})
+		})
+	})
+
+	when("#Save", func() {
+		when("image exists", func() {
+			it("returns the image digest", func() {
+				createImageOnRemote(t, repoName, `
+					FROM busybox
+					LABEL mykey=oldValue
+				`)
+
+				img, err := factory.NewRemote(repoName)
+				assertNil(t, err)
+
+				err = img.SetLabel("mykey", "newValue")
+				assertNil(t, err)
+
+				imgDigest, err := img.Save()
+				assertNil(t, err)
+
+				// After Pull
+				defer exec.Command("docker", "rmi", repoName+"@"+imgDigest).Run()
+				run(t, exec.Command("docker", "pull", repoName+"@"+imgDigest))
+				label, err := exec.Command("docker", "inspect", repoName+"@"+imgDigest, "-f", `{{.Config.Labels.mykey}}`).Output()
+				assertEq(t, strings.TrimSpace(string(label)), "newValue")
 			})
 		})
 	})
@@ -220,16 +268,19 @@ func run(t *testing.T, cmd *exec.Cmd) string {
 
 func createImageOnRemote(t *testing.T, repoName, dockerFile string) string {
 	t.Helper()
-	defer exec.Command("docker", "rmi", repoName)
+	defer exec.Command("docker", "rmi", repoName+":latest")
 
-	cmd := exec.Command("docker", "build", "-t", repoName, "-")
+	cmd := exec.Command("docker", "build", "-t", repoName+":latest", "-")
 	cmd.Stdin = strings.NewReader(dockerFile)
 	run(t, cmd)
 
-	topLayer, err := exec.Command("docker", "inspect", repoName, "-f", `{{index .RootFS.Layers 2}}`).Output()
+	topLayerJSON, err := exec.Command("docker", "inspect", repoName, "-f", `{{json .RootFS.Layers}}`).Output()
 	assertNil(t, err)
+	var layers []string
+	assertNil(t, json.Unmarshal(topLayerJSON, &layers))
+	topLayer := layers[len(layers)-1]
 
 	run(t, exec.Command("docker", "push", repoName))
 
-	return strings.TrimSpace(string(topLayer))
+	return topLayer
 }
